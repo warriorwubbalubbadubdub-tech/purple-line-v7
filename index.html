@@ -1547,9 +1547,67 @@ if ("serviceWorker" in navigator) {
     });
     /* Do not let the unlock/prime playback count as a real voice line. */
     setTimeout(()=>{ audioPriming = false; }, 350);
+    /* If a work/break session is already running by the time the user
+       first taps (e.g. state was restored on load), start the keep-alive
+       loop immediately instead of waiting for the next phase change. */
+    if(phase==='work' || phase==='break') startKeepAlive();
   }
   document.addEventListener('pointerdown', unlockBreakAudio, { once:true, passive:true });
   document.addEventListener('touchstart', unlockBreakAudio, { once:true, passive:true });
+
+  /* ---------- background keep-alive audio ----------
+     Mobile browsers throttle/suspend a tab's JS timers once the screen
+     locks or the app is backgrounded, UNLESS the page is actively holding
+     an audio session open. A tiny silent looping clip, played continuously
+     for the duration of an active work/break session, keeps the tab
+     classified as "playing media" so the OS is far less eager to freeze it
+     — which is what lets the real voice lines fire on time in the
+     background. This is a well-known trick used by web-based alarm/timer
+     apps; it is not a 100% guarantee (Android process kills, and iOS
+     Safari's background limits especially, can still interrupt it), but it
+     is what makes background playback work in practice. */
+  const SILENT_LOOP_SRC = 'data:audio/wav;base64,UklGRvQHAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YdAHAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
+
+  let keepAliveAudio = null;
+  let keepAliveActive = false;
+  function getKeepAliveAudio(){
+    if(!keepAliveAudio){
+      keepAliveAudio = new Audio(SILENT_LOOP_SRC);
+      keepAliveAudio.loop = true;
+      keepAliveAudio.volume = 1; // the source itself is silent
+      keepAliveAudio.setAttribute('playsinline','');
+    }
+    return keepAliveAudio;
+  }
+  function updateMediaSession(playing){
+    if(!('mediaSession' in navigator)) return;
+    try{
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: 'Purple Line',
+        artist: playing ? 'Timer running' : 'Idle'
+      });
+      navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+      /* Swallow hardware/lock-screen pause taps so a stray tap on
+         headphones or the notification doesn't kill the keep-alive loop
+         (and with it, background voice playback) mid-session. */
+      navigator.mediaSession.setActionHandler('play', ()=>{ startKeepAlive(); });
+      navigator.mediaSession.setActionHandler('pause', ()=>{ /* ignore */ });
+    }catch(e){}
+  }
+  function startKeepAlive(){
+    if(keepAliveActive) return;
+    const a = getKeepAliveAudio();
+    const p = a.play();
+    if(p && p.catch){ p.catch(()=>{ /* will retry on next unlock/gesture */ }); }
+    keepAliveActive = true;
+    updateMediaSession(true);
+  }
+  function stopKeepAlive(){
+    if(!keepAliveActive) return;
+    try{ getKeepAliveAudio().pause(); }catch(e){}
+    keepAliveActive = false;
+    updateMediaSession(false);
+  }
 
   /* Voice lines always play normally. While one is actually playing, the user
      gets an explicit Skip voice button. If untouched, the line reaches ended
@@ -1870,6 +1928,11 @@ if ("serviceWorker" in navigator) {
     pomodoroToggleRow.classList.toggle('disabled', customMode);
 
     if(menuSheet.classList.contains('open')) renderMenuTasks();
+
+    /* Keep the background keep-alive loop in sync with the real phase,
+       no matter which code path changed it (task switch, restart, etc). */
+    if(phase==='work' || phase==='break') startKeepAlive();
+    else stopKeepAlive();
   }
 
   function tick(){
@@ -1944,7 +2007,8 @@ if ("serviceWorker" in navigator) {
     }
     render(); updateControls();
     saveTimerState();
-    if(phase==='work') requestScreenWakeLock(); else releaseScreenWakeLock();
+    if(phase==='work'){ requestScreenWakeLock(); startKeepAlive(); }
+    else{ releaseScreenWakeLock(); stopKeepAlive(); }
   }
 
   function startBreak(){
@@ -1975,6 +2039,7 @@ if ("serviceWorker" in navigator) {
     updateControls();
     saveTimerState();
     requestScreenWakeLock();
+    startKeepAlive();
   }
 
   function finishBreak(){
