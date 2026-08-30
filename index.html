@@ -1167,7 +1167,7 @@
 <meta name="apple-mobile-web-app-title" content="Purple Line">
 <script>
 if ("serviceWorker" in navigator) {
-  const PURPLE_LINE_SW_VERSION = "11";
+  const PURPLE_LINE_SW_VERSION = "12";
   let purpleLineReloading = false;
 
   const reloadAfterControllerChange = () => {
@@ -1655,6 +1655,110 @@ if ("serviceWorker" in navigator) {
   let totalBreakMs = 0;
   let lastTickAt = 0;
 
+  /* ---------- persistent timer state for background / screen-off resume ----------
+     The timer is based on real timestamps, not on how often setInterval fires.
+     This keeps the countdown correct when the browser throttles the page.
+     A PWA still cannot guarantee future audio playback after Android completely
+     kills the browser process; in that case the state is restored and the end
+     voice is attempted as soon as the app is opened again. */
+  const TIMER_STATE_KEY = 'purple-line-timer-state-v1';
+  let timerStateVoicePending = null;
+
+  function saveTimerState(){
+    try{
+      localStorage.setItem(TIMER_STATE_KEY, JSON.stringify({
+        phase,
+        activeTaskId,
+        phaseStartedAt,
+        elapsedWork,
+        breakStartedAt,
+        breakDuration,
+        totalWorkMs,
+        totalBreakMs,
+        customWorkDuration,
+        baseMode,
+        pomodoroOn,
+        breakIdx,
+        savedAt: Date.now()
+      }));
+    }catch(e){}
+  }
+
+  function clearTimerState(){
+    try{ localStorage.removeItem(TIMER_STATE_KEY); }catch(e){}
+  }
+
+  function restoreTimerState(){
+    try{
+      const saved = JSON.parse(localStorage.getItem(TIMER_STATE_KEY) || 'null');
+      if(!saved) return;
+
+      activeTaskId = saved.activeTaskId ?? null;
+      phaseStartedAt = Number(saved.phaseStartedAt) || 0;
+      elapsedWork = Number(saved.elapsedWork) || 0;
+      breakStartedAt = Number(saved.breakStartedAt) || 0;
+      breakDuration = Number(saved.breakDuration) || 0;
+      totalWorkMs = Number(saved.totalWorkMs) || 0;
+      totalBreakMs = Number(saved.totalBreakMs) || 0;
+      customWorkDuration = Number(saved.customWorkDuration) || customWorkDuration;
+      baseMode = saved.baseMode || baseMode;
+      pomodoroOn = !!saved.pomodoroOn;
+      breakIdx = Number.isFinite(Number(saved.breakIdx)) ? Number(saved.breakIdx) : breakIdx;
+      phase = saved.phase || 'idle';
+
+      if(!tasks.some(t=>t.id===activeTaskId)) activeTaskId = null;
+
+      if(phase==='work' && phaseStartedAt){
+        const elapsedNow = elapsedWork + (Date.now()-phaseStartedAt);
+        if(elapsedNow >= getWorkDuration()){
+          elapsedWork = getWorkDuration();
+          phase = 'idle';
+          phaseStartedAt = 0;
+          clearInterval(timerId); timerId=null;
+        }else{
+          lastTickAt = Date.now();
+          clearInterval(timerId);
+          timerId = setInterval(tick,100);
+        }
+      }else if(phase==='break' && breakStartedAt && breakDuration){
+        const breakElapsed = Date.now()-breakStartedAt;
+        if(breakElapsed >= breakDuration){
+          /* The end event happened while the page was not running. */
+          timerStateVoicePending = 'end';
+          phase = 'idle';
+          clearInterval(timerId); timerId=null;
+          breakDashPhase=null;
+          breakDashProgress=0;
+          taskTip=null;
+          restTip=null;
+          restSkipOpen=false;
+        }else{
+          lastTickAt = Date.now();
+          clearInterval(timerId);
+          timerId = setInterval(tick,30);
+        }
+      }
+      updateControls();
+      render();
+      saveTimerState();
+    }catch(e){
+      console.warn('Timer state restore failed', e);
+    }
+  }
+
+  function reconcileBackgroundTimer(){
+    if(phase==='work' || phase==='break'){
+      tick();
+      saveTimerState();
+    }
+
+    if(timerStateVoicePending==='end'){
+      timerStateVoicePending = null;
+      /* Best effort: if the browser allows audio now, play the saved end line. */
+      try{ playBreakEndSound(); }catch(e){}
+    }
+  }
+
   /* ---------- daily reset at 12:00 AM Egypt time ---------- */
   function egyptDateStr(){
     try{
@@ -1788,8 +1892,15 @@ if ("serviceWorker" in navigator) {
     try{if(wakeLock){await wakeLock.release();wakeLock=null;}}catch(e){}
   }
   document.addEventListener('visibilitychange',()=>{
-    if(document.visibilityState==='visible' && (phase==='work'||phase==='break')) requestScreenWakeLock();
+    if(document.visibilityState==='visible'){
+      reconcileBackgroundTimer();
+      if(phase==='work'||phase==='break') requestScreenWakeLock();
+    }else{
+      saveTimerState();
+    }
   });
+  window.addEventListener('pagehide', saveTimerState);
+  window.addEventListener('beforeunload', saveTimerState);
 
   function stopVoices(){
     [breakStartAudio, breakEndAudio].forEach(a=>{
@@ -1808,6 +1919,7 @@ if ("serviceWorker" in navigator) {
       clearInterval(timerId); lastTickAt=0; timerId=setInterval(tick,100);
     }
     render(); updateControls();
+    saveTimerState();
     if(phase==='work') requestScreenWakeLock(); else releaseScreenWakeLock();
   }
 
@@ -1837,6 +1949,7 @@ if ("serviceWorker" in navigator) {
     clearInterval(timerId); lastTickAt=0; timerId=setInterval(tick,30);
     render();
     updateControls();
+    saveTimerState();
     requestScreenWakeLock();
   }
 
@@ -1852,10 +1965,12 @@ if ("serviceWorker" in navigator) {
     restSkipOpen = false;
     breakBigTimer.classList.remove('visible');
     breakBigTimer.classList.remove('skip-open');
+    saveTimerState();
     setTimeout(()=>{
       elapsedWork=0; phase='work'; phaseStartedAt=Date.now();
       render(); updateControls();
       lastTickAt=0; timerId=setInterval(tick,100);
+      saveTimerState();
     },300);
   }
 
@@ -2112,6 +2227,7 @@ if ("serviceWorker" in navigator) {
     tasks=[];
     uid=1;
     try{localStorage.removeItem(TASKS_STORAGE_KEY);}catch(e){}
+    clearTimerState();
     phase='idle'; elapsedWork=0; activeTaskId=null;
     breakDashPhase=null; breakDashProgress=0;
     taskTip=null; restTip=null; breakDuration=0;
@@ -2590,6 +2706,7 @@ if ("serviceWorker" in navigator) {
     resizeT = setTimeout(()=>render(), 120);
   });
 
+  restoreTimerState();
   render();
   updateControls();
 })();
