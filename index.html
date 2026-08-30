@@ -341,7 +341,7 @@
     color:var(--text-tertiary);
     margin-top:3px;
     max-width:170px;
-    white-space:normal;
+    white-space:pre-wrap;
     line-height:1.3;
   }
   .task-label.expanded .note-display,
@@ -997,10 +997,10 @@
   .note-editor{
     display:flex;
     gap:6px;
-    align-items:center;
+    align-items:flex-end;
     padding:2px 0 12px 28px;
   }
-  .note-editor input{
+  .note-editor textarea{
     flex:1;
     background:var(--input-bg);
     border:1px solid rgba(168,85,247,0.25);
@@ -1010,8 +1010,14 @@
     font-family:'Manrope',sans-serif;
     font-size:13px;
     outline:none;
+    resize:none;
+    overflow:hidden;
+    min-height:34px;
+    max-height:160px;
+    line-height:1.35;
+    white-space:pre-wrap;
   }
-  .note-editor input:focus{ border-color:rgba(168,85,247,0.6); }
+  .note-editor textarea:focus{ border-color:rgba(168,85,247,0.6); }
   .note-save-btn{
     padding:8px 12px;
     border:none;
@@ -1083,8 +1089,285 @@
     margin-top:3px;
     text-align:center;
     line-height:1.3;
+    white-space:pre-wrap;
   }
   .recall-chip.note-peek .recall-chip-note{ display:block; }
+
+  /* ---------- Programming Mode ---------- */
+  .prog-mode-btn{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    width:100%;
+    padding:9px 12px;
+    margin-bottom:14px;
+    border:1px solid rgba(21,128,61,0.35);
+    border-radius:10px;
+    background:rgba(21,128,61,0.12);
+    color:#15803d;
+    font-family:'Manrope',sans-serif;
+    font-size:12px;
+    font-weight:700;
+    letter-spacing:0.01em;
+    cursor:pointer;
+    transition:background .15s ease, color .15s ease, transform .15s ease;
+  }
+  .prog-mode-btn .icon{ font-size:14px; }
+  .prog-mode-btn:hover{ background:rgba(21,128,61,0.2); }
+  .prog-mode-btn:active{ transform:scale(0.97); }
+  .prog-mode-btn.on{ background:#166534; color:#eafff0; border-color:#166534; }
+  body.dark .prog-mode-btn{ background:rgba(34,197,94,0.14); color:#4ade80; border-color:rgba(34,197,94,0.32); }
+  body.dark .prog-mode-btn.on{ background:#15803d; color:#eafff0; border-color:#15803d; }
+  .csharp-badge{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    width:17px;
+    height:17px;
+    border-radius:4px;
+    background:linear-gradient(135deg,#8b5cf6,#5b21b6);
+    color:#fff;
+    font-size:8px;
+    font-weight:800;
+    font-family:'Manrope',sans-serif;
+    letter-spacing:-0.02em;
+    flex-shrink:0;
+  }
+
+  .prog-checklist-wrap{ display:none; margin:2px 0 16px; }
+  body.prog-mode .prog-checklist-wrap{ display:block; }
+  .prog-checklist-hd{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    cursor:pointer;
+    user-select:none;
+  }
+  .prog-progress{ font-weight:400; text-transform:none; letter-spacing:0; color:var(--text-tertiary); font-size:10px; }
+  .prog-collapse-chevron{
+    font-size:11px;
+    color:#16a34a;
+    transition:transform .2s ease;
+    flex-shrink:0;
+  }
+  .prog-checklist-wrap.collapsed .prog-collapse-chevron{ transform:rotate(-90deg); }
+  .prog-checklist-body{ overflow:hidden; }
+  .prog-checklist-wrap.collapsed .prog-checklist-body{ display:none; }
+  .prog-checklist{
+    max-height:260px;
+    overflow-y:auto;
+    border:1px solid rgba(34,197,94,0.18);
+    border-radius:12px;
+    padding:4px 6px;
+    background:var(--input-bg);
+  }
+  .prog-section-hd{
+    font-size:10px;
+    font-weight:700;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    color:#16a34a;
+    padding:8px 4px 4px;
+  }
+  .prog-item{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    padding:6px 4px;
+    border-bottom:1px solid rgba(148,163,184,0.12);
+  }
+  .prog-item:last-child{ border-bottom:none; }
+  .prog-item-main{
+    flex:1;
+    min-width:0;
+    cursor:pointer;
+  }
+  .prog-item-text{
+    font-size:12px;
+    color:var(--text-primary);
+    line-height:1.3;
+    word-break:break-word;
+  }
+  .prog-item.prog-done .prog-item-text{ color:var(--text-tertiary); }
+  .prog-item-edit-input{
+    width:100%;
+    background:var(--input-bg);
+    border:1px solid rgba(34,197,94,0.4);
+    border-radius:8px;
+    padding:5px 7px;
+    color:var(--text-primary);
+    font-family:'Manrope',sans-serif;
+    font-size:12px;
+    outline:none;
+  }
+  .prog-item-actions{
+    display:flex;
+    align-items:center;
+    gap:4px;
+    flex-shrink:0;
+  }
+  .prog-rev-badge{
+    font-size:9px;
+    font-weight:700;
+    color:#16a34a;
+    min-width:14px;
+    text-align:center;
+  }
+  .prog-check-btn, .prog-edit-btn, .prog-del-btn, .prog-reset-btn{
+    width:22px;
+    height:22px;
+    border:none;
+    border-radius:50%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:11px;
+    cursor:pointer;
+    background:transparent;
+    color:var(--text-tertiary);
+    flex-shrink:0;
+  }
+  .prog-check-btn{ background:rgba(34,197,94,0.12); color:#22c55e; }
+  .prog-check-btn:active{ transform:scale(0.9); }
+  .prog-item.prog-done .prog-check-btn{ background:#16a34a; color:#eafff0; }
+  .prog-edit-btn:hover{ color:#16a34a; }
+  .prog-del-btn:hover{ color:#ef4444; }
+  .prog-reset-btn{ font-size:10px; }
+  .prog-reset-btn:hover{ color:#ef4444; }
+  .prog-add-row{
+    display:flex;
+    gap:6px;
+    margin-top:8px;
+  }
+  .prog-add-row input{
+    flex:1;
+    background:var(--input-bg);
+    border:1px solid rgba(34,197,94,0.25);
+    border-radius:10px;
+    padding:8px 10px;
+    color:var(--text-primary);
+    font-family:'Manrope',sans-serif;
+    font-size:13px;
+    outline:none;
+  }
+  .prog-add-btn{
+    width:36px;
+    height:36px;
+    flex-shrink:0;
+    border:none;
+    border-radius:10px;
+    background:#16a34a;
+    color:#eafff0;
+    font-size:18px;
+    cursor:pointer;
+  }
+
+  /* body.prog-mode: dark-locked, purple → light grey, buttons → dark green */
+  body.prog-mode{
+    --purple-core:#b6bec9;
+    --purple-bright:#c9d0d8;
+    --purple-dim:#7c8794;
+    --purple-muted:#4b5563;
+    --bg-glow-1:rgba(148,163,184,0.09);
+    --bg-glow-2:rgba(148,163,184,0.05);
+  }
+  body.prog-mode .add-btn{
+    background:radial-gradient(circle at 35% 30%, #6ee7a5, #16a34a 60%, #14532d);
+    color:#0c2015;
+    box-shadow:0 0 0 rgba(0,0,0,0), 0 4px 18px rgba(22,163,74,0.45);
+  }
+  body.prog-mode .add-btn:active{ box-shadow:0 2px 10px rgba(22,163,74,0.4); }
+  body.prog-mode .menu-add-btn,
+  body.prog-mode .note-save-btn{ background:#166534; }
+  body.prog-mode .menu-input-row input:focus,
+  body.prog-mode .menu-input-row{ border-color:rgba(156,163,175,0.35); }
+  body.prog-mode .method-btn{ border-color:rgba(156,163,175,0.22); }
+  body.prog-mode .method-btn.active{
+    background:rgba(22,163,74,0.18);
+    color:#4ade80;
+    border-color:rgba(34,197,94,0.55);
+  }
+  body.prog-mode .method-btn[data-mode="recall"]{ display:none; }
+  body.prog-mode .toggle-switch{ background:rgba(156,163,175,0.22); }
+  body.prog-mode .toggle-switch.on{ background:#16a34a; }
+  body.prog-mode .act-select{ background:rgba(156,163,175,0.18); }
+  body.prog-mode .act-select.is-active{ background:#16a34a; box-shadow:0 0 0 2px rgba(34,197,94,0.25); }
+  body.prog-mode .complete-btn.is-done{ color:#16a34a; }
+  body.prog-mode .restart-btn{ background:rgba(156,163,175,0.14); }
+  body.prog-mode .restart-btn:hover{ color:#16a34a; background:rgba(34,197,94,0.18); }
+  body.prog-mode .phase-btn{ border-color:rgba(156,163,175,0.24); }
+  body.prog-mode .diff-btn.green,
+  body.prog-mode .diff-dot.green{ background:#22c55e; }
+  body.prog-mode .theme-btn{ visibility:hidden; pointer-events:none; }
+
+  /* menu rows / chips that used hardcoded purple rgba instead of the
+     --purple-core variable — recolor these explicitly to grey */
+  body.prog-mode .menu-task:hover{ background:rgba(156,163,175,0.1); }
+  body.prog-mode .menu-task.active{ background:rgba(156,163,175,0.16); }
+  body.prog-mode .menu-task .complete-btn:hover,
+  body.prog-mode .menu-task .note-btn:hover{ color:#9ca3af; background:rgba(156,163,175,0.12); }
+  body.prog-mode .menu-voice-btn{ border-color:rgba(156,163,175,0.22); }
+  body.prog-mode .menu-voice-btn:hover{ background:rgba(156,163,175,0.1); }
+  body.prog-mode .menu-voice-panel{ border-color:rgba(156,163,175,0.16); }
+  body.prog-mode .menu-status-btn{ border-color:rgba(156,163,175,0.22); }
+  body.prog-mode .menu-status-btn:hover{ background:rgba(156,163,175,0.1); }
+  body.prog-mode .custom-timer-panel{ border-color:rgba(156,163,175,0.2); }
+  body.prog-mode #customMinutesInput,
+  body.prog-mode #customBreakMinutesInput{ border-color:rgba(156,163,175,0.25); }
+  body.prog-mode .custom-minute-shortcuts button,
+  body.prog-mode .custom-break-shortcuts button{ border-color:rgba(156,163,175,0.22); }
+  body.prog-mode .task-label.active .txt{ text-shadow:0 0 10px rgba(156,163,175,0.35); }
+  body.prog-mode .note-editor textarea{ border-color:rgba(156,163,175,0.3); }
+
+  /* voice chips: everything except Rick fades away; Rick's active state
+     glows green instead of purple */
+  body.prog-mode .voice-chip{ border-color:rgba(156,163,175,0.25); }
+  body.prog-mode .voice-chip:hover{ border-color:rgba(156,163,175,0.5); }
+  body.prog-mode .voice-chip.active{
+    background:#16a34a;
+    color:#eafff0;
+    border-color:#16a34a;
+    box-shadow:0 0 0 3px rgba(34,197,94,0.22), 0 2px 10px rgba(34,197,94,0.35);
+  }
+  body.prog-mode .voice-chip:not([data-voice-id="rick"]){
+    opacity:0.14;
+    pointer-events:none;
+  }
+
+  /* Programming Mode only: extra fine rays added around the center. */
+  body.prog-mode .prog-extra-ray{
+    stroke-width:1.7;
+    opacity:0.62;
+  }
+
+  /* central wheel: ray glow filters recolored from purple to grey */
+  body.prog-mode .ray-core{ filter:drop-shadow(0 0 3px rgba(156,163,175,0.28)); }
+  body.prog-mode .ray-rest{ filter:drop-shadow(0 0 3px rgba(156,163,175,0.3)); }
+  body.prog-mode .ray-task{ filter:drop-shadow(0 0 2px rgba(156,163,175,0.12)); }
+  body.prog-mode .ray-task.active{
+    stroke:#b6bec9;
+    filter:
+      drop-shadow(0 0 4px rgba(182,190,201,0.75))
+      drop-shadow(0 0 12px rgba(182,190,201,0.45))
+      drop-shadow(0 0 24px rgba(182,190,201,0.22));
+  }
+  body.prog-mode .ray-task.done{ filter:drop-shadow(0 0 2px rgba(156,163,175,0.15)); }
+  body.prog-mode .ray-task.active.done{
+    stroke:#b6bec9;
+    filter:drop-shadow(0 0 3px rgba(182,190,201,0.35));
+  }
+  body.prog-mode .ray-task.completed{ filter:drop-shadow(0 0 3px rgba(156,163,175,0.28)); }
+  body.prog-mode .nucleus{ filter:drop-shadow(0 0 5px rgba(156,163,175,0.5)) drop-shadow(0 0 11px rgba(156,163,175,0.25)); }
+
+  /* status panel gets its own "Programming" label while active */
+  body.prog-mode #menuStatusLabel::after{ content:' · Programming'; color:#16a34a; font-weight:600; }
+
+  /* Voice: only Rick is usable in Programming Mode — everything else fades
+     to near-transparent and stops responding to taps. */
+  body.prog-mode .voice-chip:not([data-voice-id="rick"]){
+    opacity:0.14;
+    pointer-events:none;
+  }
 
   /* ---------- small phone widths ---------- */
   @media (max-width:400px){
@@ -1259,7 +1542,7 @@ if ("serviceWorker" in navigator) {
 
 <div class="app">
   <div class="topbar">
-    <div class="wordmark">Purple<span>·</span>Line</div>
+    <div class="wordmark" id="wordmark">Purple<span>·</span>Line</div>
     <div class="top-actions">
       <button type="button" class="theme-btn" id="themeBtn" aria-label="Enable dark mode" title="Dark mode">☾</button>
       <div class="today" id="todayLabel"></div>
@@ -1297,6 +1580,9 @@ if ("serviceWorker" in navigator) {
     <button type="button" class="menu-close" id="menuClose">✕</button>
   </div>
   <div class="menu-body">
+    <button type="button" class="prog-mode-btn" id="progModeBtn">
+      <span id="progModeBtnLabel">Programming Mode</span>
+    </button>
     <div class="menu-section-label">Mode</div>
     <div class="method-row" id="methodRow">
       <button type="button" class="method-btn active" data-mode="default">Default</button>
@@ -1341,11 +1627,11 @@ if ("serviceWorker" in navigator) {
     </div>
     <div class="menu-status-btn" id="menuStatusBtn">
       <span class="icon">⏱</span>
-      <span>Status</span>
+      <span id="menuStatusLabel">Status</span>
     </div>
     <div class="menu-status-panel" id="menuStatusPanel">
-      <div class="status-row"><span>Total work</span><span id="statusWorkVal">00:00</span></div>
-      <div class="status-row"><span>Total break</span><span id="statusBreakVal">00:00</span></div>
+      <div class="status-row"><span id="statusWorkLabel">Total work</span><span id="statusWorkVal">00:00</span></div>
+      <div class="status-row"><span id="statusBreakLabel">Total break</span><span id="statusBreakVal">00:00</span></div>
     </div>
     <div class="menu-voice-btn" id="menuVoiceBtn">
       <span class="icon">🎙</span>
@@ -1358,7 +1644,7 @@ if ("serviceWorker" in navigator) {
       <span id="voiceVolumeVal">90%</span>
     </div>
     <div class="menu-input-row">
-      <input id="menuTaskInput" type="text" placeholder="Add a task…" maxlength="24" autocomplete="off">
+      <input id="menuTaskInput" type="text" placeholder="Add a task…" autocomplete="off">
       <select id="menuSplitSelect" class="menu-split-select" style="display:none">
         <option value="1">No split</option>
         <option value="2">2 parts</option>
@@ -1367,6 +1653,19 @@ if ("serviceWorker" in navigator) {
         <option value="5">5 parts</option>
       </select>
       <button type="button" class="menu-add-btn" id="menuAddBtn">+</button>
+    </div>
+    <div class="prog-checklist-wrap" id="progChecklistWrap">
+      <div class="menu-section-label prog-checklist-hd" id="progChecklistToggle">
+        <span>Programming Curriculum <span class="prog-progress" id="progProgress"></span></span>
+        <span class="prog-collapse-chevron" id="progChevron">▾</span>
+      </div>
+      <div class="prog-checklist-body" id="progChecklistBody">
+        <div class="prog-checklist" id="progChecklist"></div>
+        <div class="prog-add-row">
+          <input id="progAddInput" type="text" placeholder="Add a topic…" autocomplete="off">
+          <button type="button" class="prog-add-btn" id="progAddBtn">+</button>
+        </div>
+      </div>
     </div>
     <div class="menu-plus5" id="menuPlus5" style="display:none">
       <span class="icon">+5m</span>
@@ -1817,8 +2116,12 @@ if ("serviceWorker" in navigator) {
     VOICE_PACKS.forEach(pack=>{
       const chip = document.createElement('span');
       chip.className = 'voice-chip' + (pack.color ? ' chip-'+pack.color : '') + (pack.id===selectedVoiceId ? ' active' : '');
+      chip.dataset.voiceId = pack.id;
       chip.innerHTML = pack.id === 'random' ? '🎲 Random' : pack.name;
-      chip.addEventListener('click', ()=>selectVoice(pack.id));
+      chip.addEventListener('click', ()=>{
+        if(document.body.classList.contains('prog-mode') && pack.id!=='rick') return;
+        selectVoice(pack.id);
+      });
       menuVoicePanel.appendChild(chip);
     });
   }
@@ -2469,11 +2772,12 @@ if ("serviceWorker" in navigator) {
     }
     const editor = document.createElement('div');
     editor.className = 'note-editor';
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.maxLength = 60;
-    input.placeholder = t.group ? ('Add a note for Part '+t.partIndex+'…') : 'Add a note…';
+    const input = document.createElement('textarea');
+    input.rows = 1;
+    input.maxLength = 500;
+    input.placeholder = t.group ? ('Add a note for Part '+t.partIndex+'… (multi-line ok)') : 'Add a note… (multi-line ok)';
     input.value = t.note || '';
+    const autoGrow = ()=>{ input.style.height='auto'; input.style.height = Math.min(160, input.scrollHeight)+'px'; };
     const saveBtn = document.createElement('button');
     saveBtn.type = 'button';
     saveBtn.className = 'note-save-btn';
@@ -2483,13 +2787,18 @@ if ("serviceWorker" in navigator) {
       saveTasks();
       renderMenuTasks();
     });
+    input.addEventListener('input', autoGrow);
     input.addEventListener('keydown', e=>{
-      if(e.key==='Enter'){ e.preventDefault(); saveBtn.click(); }
+      /* Enter adds a new line like any normal multi-line field; only an
+         explicit Cmd/Ctrl+Enter (or the Save button) saves the note, so
+         typing a 3rd/4th line never gets swallowed or cuts the note off. */
+      if(e.key==='Enter' && (e.metaKey || e.ctrlKey)){ e.preventDefault(); saveBtn.click(); }
     });
     editor.appendChild(input);
     editor.appendChild(saveBtn);
     rowDiv.insertAdjacentElement('afterend', editor);
     input.focus();
+    autoGrow();
   }
 
   document.getElementById('restartBtn').addEventListener('click',()=>{
@@ -2559,16 +2868,59 @@ if ("serviceWorker" in navigator) {
   const GOLDEN = 137.50776;
 
   const TASKS_STORAGE_KEY = 'purple-line-tasks-v2';
+  const PROG_TASKS_STORAGE_KEY = 'purple-line-programming-tasks-v1';
+
+  // Each mode has its own set of user-created lines.
+  // Existing normal-mode tasks stay in TASKS_STORAGE_KEY.
   let tasks = [];
+  let normalTasks = [];
+  let programmingTasks = [];
   let uid = 1;
+
   try{
     const saved=JSON.parse(localStorage.getItem(TASKS_STORAGE_KEY)||'null');
     if(saved && Array.isArray(saved.tasks)){
       tasks=saved.tasks;
-      uid=Number(saved.uid)||(tasks.reduce((m,t)=>Math.max(m,Number(t.id)||0),0)+1);
     }
-  }catch(e){tasks=[];uid=1;}
-  function saveTasks(){try{localStorage.setItem(TASKS_STORAGE_KEY,JSON.stringify({tasks,uid}));}catch(e){}}
+  }catch(e){tasks=[];}
+
+  normalTasks = tasks;
+
+  try{
+    const savedProg=JSON.parse(localStorage.getItem(PROG_TASKS_STORAGE_KEY)||'null');
+    if(savedProg && Array.isArray(savedProg.tasks)){
+      programmingTasks=savedProg.tasks;
+    }
+  }catch(e){programmingTasks=[];}
+
+  let normalSavedUid = 0;
+  let programmingSavedUid = 0;
+  try{ normalSavedUid = Number((JSON.parse(localStorage.getItem(TASKS_STORAGE_KEY)||'null')||{}).uid)||0; }catch(e){}
+  try{ programmingSavedUid = Number((JSON.parse(localStorage.getItem(PROG_TASKS_STORAGE_KEY)||'null')||{}).uid)||0; }catch(e){}
+  const allIds = normalTasks.concat(programmingTasks).map(t=>Number(t.id)||0);
+  uid = Math.max(normalSavedUid, programmingSavedUid, ...allIds) + 1;
+
+  function saveTasks(){
+    try{
+      if(document.body.classList.contains('prog-mode')){
+        programmingTasks = tasks;
+        localStorage.setItem(PROG_TASKS_STORAGE_KEY,JSON.stringify({tasks:programmingTasks,uid}));
+      }else{
+        normalTasks = tasks;
+        localStorage.setItem(TASKS_STORAGE_KEY,JSON.stringify({tasks:normalTasks,uid}));
+      }
+    }catch(e){}
+  }
+
+  function switchTaskSet(isProgrammingMode){
+    saveTasks();
+    tasks = isProgrammingMode ? programmingTasks : normalTasks;
+    activeTaskId = null;
+    phase = 'idle';
+    elapsedWork = 0;
+    clearInterval(timerId);
+    timerId = null;
+  }
   const labelUiState = {}; // taskId -> {expanded, diffOpen} — persists across re-renders since labels are rebuilt every tick
 
   function dir(angleDeg){
@@ -2597,7 +2949,9 @@ if ("serviceWorker" in navigator) {
   function render(justAddedId){
     const c = center();
     const sf = scaleFactor();
-    let svgHtml = `<circle class="nucleus" cx="${c.x}" cy="${c.y}" r="${12*sf}"></circle>`;
+    const isProgrammingMode = document.body.classList.contains('prog-mode');
+    // No center circle in either mode.
+    let svgHtml = '';
     labelLayer.innerHTML = '';
 
     const rd = dir(R_ANGLE);
@@ -2605,12 +2959,38 @@ if ("serviceWorker" in navigator) {
     svgHtml += line(c, rTip.x, rTip.y, 'ray-rest');
     placeLabel(rTip, rd, 'R', 'label rest-label', null, true);
 
-    CORE_RAYS.forEach(r=>{
+    const activeCoreRays = isProgrammingMode
+      ? CORE_RAYS.filter((_,i)=>i%2===0).map(r=>({...r, dur: Math.max(1.1, r.dur*0.4)}))
+      : CORE_RAYS;
+
+    activeCoreRays.forEach(r=>{
       const {dx,dy} = dir(r.angle);
       const style = `transform-origin:${c.x}px ${c.y}px; animation-duration:${r.dur}s; animation-delay:${r.delay}s;`;
       svgHtml += line(c, c.x+dx*r.len*sf, c.y+dy*r.len*sf, 'ray-core', null, style);
     });
 
+    // Extra decorative rays exist ONLY in Programming Mode.
+    if(isProgrammingMode){
+      const extraProgRays = [
+        {angle:8.2,len:38,dur:1.7,delay:0.00},
+        {angle:41.8,len:44,dur:2.0,delay:0.18},
+        {angle:74.1,len:36,dur:1.8,delay:0.36},
+        {angle:106.4,len:43,dur:2.1,delay:0.54},
+        {angle:139.7,len:37,dur:1.9,delay:0.72},
+        {angle:171.2,len:45,dur:2.2,delay:0.90},
+        {angle:204.6,len:39,dur:1.8,delay:0.12},
+        {angle:237.9,len:44,dur:2.0,delay:0.30},
+        {angle:271.5,len:36,dur:1.7,delay:0.48},
+        {angle:304.8,len:43,dur:2.1,delay:0.66},
+        {angle:338.3,len:37,dur:1.9,delay:0.84}
+      ];
+
+      extraProgRays.forEach(r=>{
+        const {dx,dy} = dir(r.angle);
+        const style = `transform-origin:${c.x}px ${c.y}px; animation-duration:${r.dur}s; animation-delay:${r.delay}s;`;
+        svgHtml += line(c, c.x+dx*r.len*sf, c.y+dy*r.len*sf, 'ray-core prog-extra-ray', null, style);
+      });
+    }
     if(activeTaskId){
       const active=tasks.find(t=>t.id===activeTaskId);
       if(active){
@@ -2976,6 +3356,337 @@ if ("serviceWorker" in navigator) {
     clearTimeout(resizeT);
     resizeT = setTimeout(()=>render(), 120);
   });
+
+  /* ---------- Programming Mode ---------- */
+  (function(){
+    const progModeBtn = document.getElementById('progModeBtn');
+    const progModeBtnLabel = document.getElementById('progModeBtnLabel');
+    const wordmark = document.getElementById('wordmark');
+    const progChecklist = document.getElementById('progChecklist');
+    const progProgress = document.getElementById('progProgress');
+    const progAddInput = document.getElementById('progAddInput');
+    const progAddBtn = document.getElementById('progAddBtn');
+    if(!progModeBtn) return;
+
+    const PROG_KEY = 'purple-line-prog-checklist-v1';
+    const PROG_MODE_KEY = 'purple-line-prog-mode';
+    const PROG_PREV_VOICE_KEY = 'purple-line-prog-prev-voice';
+    const PROG_PREV_THEME_KEY = 'purple-line-prog-prev-theme';
+
+    /* Seed curriculum — section markers start with "## " */
+    const PROG_SEED_RAW = [
+      '## Fundamentals',
+      'Program.cs (Minimal Hosting Model)','Dependency Injection','Service Lifetimes (Transient / Scoped / Singleton)',
+      'Middleware Pipeline','Custom Middleware','Configuration (appsettings.json)',
+      'Options Pattern (IOptions / IOptionsSnapshot / IOptionsMonitor)','Environments',
+      'Logging (ILogger + Serilog)','Global Exception Handling',
+      '## Web API',
+      'Controllers','Attribute Routing','Model Binding','Model Validation',
+      'HTTP Methods (GET / POST / PUT / PATCH / DELETE)','HTTP Status Codes','REST API Design',
+      'Swagger / OpenAPI','API Versioning','Problem Details (RFC9457)',
+      '## Entity Framework Core',
+      'DbContext','DbSet','Migrations','CRUD','LINQ to Entities','Relationships','Navigation Properties',
+      'Include / ThenInclude','Tracking vs AsNoTracking','Projection (Select)','Transactions',
+      'Optimistic Concurrency','Query Performance','Soft Delete','Audit Fields',
+      '## Architecture',
+      'DTOs','Mapping (Mapster)','Service Layer','Repository Pattern (Basic)','Clean Architecture',
+      'Extension Methods','Result Pattern',
+      '## Authentication & Security',
+      'ASP.NET Core Identity','JWT Authentication','Register','Login','Refresh Tokens','Roles','Claims',
+      'Policy Authorization','Authorize / AllowAnonymous','Password Hashing','CORS','Rate Limiting',
+      'Security Headers','Secrets Management',
+      '## Real World Features',
+      'Pagination','Filtering','Searching','Sorting','File Upload','File Storage Service','IMemoryCache',
+      'Redis Basics','Background Services (IHostedService)','Health Checks',
+      '## Performance',
+      'async / await','Task','CancellationToken','N+1 Problem','Database Indexing Basics','Response Caching',
+      '## DevOps',
+      'Git','GitHub','Branching','Merge','Pull Requests','Docker','Deployment','CI/CD Basics',
+      '## Testing',
+      'Unit Testing','Integration Testing Basics',
+      '## Advanced (بعد أول وظيفة)',
+      'MediatR','CQRS','Advanced Redis','RabbitMQ','Advanced EF Core','Monitoring & Observability',
+      'System Design Basics',
+      '## Portfolio',
+      'Production-Level API Project','Professional GitHub Portfolio','Professional README',
+      'API Documentation','Architecture Diagram','Clean Commit History'
+    ];
+
+    function buildSeedItems(){
+      const items = [];
+      let section = null;
+      let n = 1;
+      PROG_SEED_RAW.forEach(line=>{
+        if(line.startsWith('## ')){ section = line.slice(3); return; }
+        items.push({ id:'p'+n, text:line, section, revisions:0 });
+        n++;
+      });
+      return items;
+    }
+
+    let progItems = [];
+    try{
+      const saved = JSON.parse(localStorage.getItem(PROG_KEY) || 'null');
+      progItems = (saved && Array.isArray(saved)) ? saved : buildSeedItems();
+    }catch(e){ progItems = buildSeedItems(); }
+    let progUid = progItems.reduce((m,it)=>{
+      const n = parseInt(String(it.id).replace(/\D/g,''),10);
+      return Number.isFinite(n) ? Math.max(m,n) : m;
+    }, 0) + 1;
+
+    function saveProg(){ try{ localStorage.setItem(PROG_KEY, JSON.stringify(progItems)); }catch(e){} }
+
+    function renderProgChecklist(){
+      if(!progChecklist) return;
+      progChecklist.innerHTML = '';
+      let lastSection = undefined;
+      let doneCount = 0;
+      progItems.forEach(it=>{
+        if(it.revisions>0) doneCount++;
+        if(it.section !== lastSection){
+          lastSection = it.section;
+          if(it.section){
+            const hd = document.createElement('div');
+            hd.className = 'prog-section-hd';
+            hd.textContent = it.section;
+            progChecklist.appendChild(hd);
+          }
+        }
+        const row = document.createElement('div');
+        row.className = 'prog-item' + (it.revisions>0 ? ' prog-done' : '');
+        row.dataset.id = it.id;
+
+        const main = document.createElement('div');
+        main.className = 'prog-item-main';
+        const txt = document.createElement('span');
+        txt.className = 'prog-item-text';
+        txt.textContent = it.text;
+        main.appendChild(txt);
+        main.title = 'Tap to send to the task input';
+        main.addEventListener('click', ()=>{
+          if(!menuTaskInput) return;
+          menuTaskInput.value = it.text;
+          menuTaskInput.focus();
+        });
+
+        const actions = document.createElement('div');
+        actions.className = 'prog-item-actions';
+
+        if(it.revisions>0){
+          const badge = document.createElement('span');
+          badge.className = 'prog-rev-badge';
+          badge.textContent = '×'+it.revisions;
+          actions.appendChild(badge);
+        }
+
+        const checkBtn = document.createElement('button');
+        checkBtn.type = 'button';
+        checkBtn.className = 'prog-check-btn';
+        checkBtn.title = 'Mark complete — tap again to log a revision';
+        checkBtn.textContent = '✓';
+        checkBtn.addEventListener('click', e=>{
+          e.stopPropagation();
+          it.revisions = (it.revisions||0) + 1;
+          saveProg();
+          renderProgChecklist();
+        });
+        actions.appendChild(checkBtn);
+
+        if(it.revisions>0){
+          const resetBtn = document.createElement('button');
+          resetBtn.type = 'button';
+          resetBtn.className = 'prog-reset-btn';
+          resetBtn.title = 'Reset progress';
+          resetBtn.textContent = '↺';
+          resetBtn.addEventListener('click', e=>{
+            e.stopPropagation();
+            it.revisions = 0;
+            saveProg();
+            renderProgChecklist();
+          });
+          actions.appendChild(resetBtn);
+        }
+
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'prog-edit-btn';
+        editBtn.title = 'Edit';
+        editBtn.textContent = '✎';
+        editBtn.addEventListener('click', e=>{
+          e.stopPropagation();
+          startProgEdit(row, it);
+        });
+        actions.appendChild(editBtn);
+
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'prog-del-btn';
+        delBtn.title = 'Delete';
+        delBtn.textContent = '✕';
+        delBtn.addEventListener('click', e=>{
+          e.stopPropagation();
+          progItems = progItems.filter(x=>x.id!==it.id);
+          saveProg();
+          renderProgChecklist();
+        });
+        actions.appendChild(delBtn);
+
+        row.appendChild(main);
+        row.appendChild(actions);
+        progChecklist.appendChild(row);
+      });
+      if(progProgress) progProgress.textContent = doneCount + ' / ' + progItems.length;
+    }
+
+    function startProgEdit(row, it){
+      const main = row.querySelector('.prog-item-main');
+      main.innerHTML = '';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'prog-item-edit-input';
+      input.maxLength = 80;
+      input.value = it.text;
+      main.appendChild(input);
+      input.focus();
+      input.select();
+      const commit = ()=>{
+        const v = input.value.trim();
+        if(v) it.text = v;
+        saveProg();
+        renderProgChecklist();
+      };
+      input.addEventListener('keydown', e=>{
+        e.stopPropagation();
+        if(e.key==='Enter'){ e.preventDefault(); commit(); }
+        if(e.key==='Escape'){ e.preventDefault(); renderProgChecklist(); }
+      });
+      input.addEventListener('click', e=>e.stopPropagation());
+      input.addEventListener('blur', commit);
+    }
+
+    if(progAddBtn){
+      progAddBtn.addEventListener('click', ()=>{
+        const v = progAddInput.value.trim();
+        if(!v) return;
+        progItems.push({ id:'p'+(progUid++), text:v, section:'Custom', revisions:0 });
+        progAddInput.value = '';
+        saveProg();
+        renderProgChecklist();
+      });
+    }
+    if(progAddInput){
+      progAddInput.addEventListener('keydown', e=>{
+        if(e.key==='Enter'){ e.preventDefault(); progAddBtn.click(); }
+      });
+    }
+
+    /* ---------- collapsible checklist ---------- */
+    const progChecklistWrap = document.getElementById('progChecklistWrap');
+    const progChecklistToggle = document.getElementById('progChecklistToggle');
+    const PROG_COLLAPSED_KEY = 'purple-line-prog-checklist-collapsed';
+    if(progChecklistToggle && progChecklistWrap){
+      let collapsed = false;
+      try{ collapsed = localStorage.getItem(PROG_COLLAPSED_KEY)==='1'; }catch(e){}
+      progChecklistWrap.classList.toggle('collapsed', collapsed);
+      progChecklistToggle.addEventListener('click', ()=>{
+        const now = !progChecklistWrap.classList.contains('collapsed');
+        progChecklistWrap.classList.toggle('collapsed', now);
+        try{ localStorage.setItem(PROG_COLLAPSED_KEY, now ? '1' : '0'); }catch(e){}
+      });
+    }
+
+    renderProgChecklist();
+
+    /* ---------- own status totals for Programming Mode ---------- */
+    const PROG_STATUS_KEY = 'purple-line-prog-status-v1';
+    const NORMAL_STATUS_STASH_KEY = 'purple-line-normal-status-stash-v1';
+
+    /* ---------- Default → Pomodoro relabel in Programming Mode ---------- */
+    const defaultBtn = methodRow.querySelector('.method-btn[data-mode="default"]');
+    const defaultBtnOrigText = defaultBtn ? defaultBtn.textContent : 'Default';
+
+    /* ---------- entering / exiting the mode ---------- */
+    function setProgMode(on){
+      switchTaskSet(on);
+      document.body.classList.toggle('prog-mode', on);
+      progModeBtn.classList.toggle('on', on);
+      progModeBtnLabel.textContent = on ? 'Exit Programming Mode' : 'Programming Mode';
+      if(wordmark) wordmark.innerHTML = on ? 'Grey<span>·</span>Line' : 'Purple<span>·</span>Line';
+      try{ localStorage.setItem(PROG_MODE_KEY, on ? '1' : '0'); }catch(e){}
+
+      if(on){
+        try{
+          localStorage.setItem(PROG_PREV_THEME_KEY, document.body.classList.contains('dark') ? 'dark' : 'light');
+        }catch(e){}
+        if(!document.body.classList.contains('dark')){
+          document.body.classList.add('dark');
+          const themeBtn = document.getElementById('themeBtn');
+          if(themeBtn){
+            themeBtn.textContent = '\u2600';
+            themeBtn.setAttribute('aria-label','Disable dark mode');
+            themeBtn.title = 'Light mode';
+          }
+        }
+        try{ localStorage.setItem(PROG_PREV_VOICE_KEY, selectedVoiceId); }catch(e){}
+        if(selectedVoiceId !== 'rick') selectVoice('rick');
+        if(baseMode === 'recall'){
+          const customBtn = methodRow.querySelector('.method-btn[data-mode="custom"]');
+          if(customBtn) customBtn.click();
+        }
+
+        /* "Default" becomes "Pomodoro" here — no Default mode in Programming Mode */
+        if(defaultBtn){
+          defaultBtn.textContent = 'Pomodoro';
+          if(baseMode==='default' && !pomodoroOn) pomodoroToggle.click();
+        }
+
+        /* swap in this mode's own work/break totals */
+        try{ localStorage.setItem(NORMAL_STATUS_STASH_KEY, JSON.stringify({totalWorkMs, totalBreakMs})); }catch(e){}
+        let progStatus = {totalWorkMs:0, totalBreakMs:0};
+        try{ progStatus = JSON.parse(localStorage.getItem(PROG_STATUS_KEY) || 'null') || progStatus; }catch(e){}
+        totalWorkMs = Number(progStatus.totalWorkMs) || 0;
+        totalBreakMs = Number(progStatus.totalBreakMs) || 0;
+      } else {
+        let prevTheme = 'light';
+        try{ prevTheme = localStorage.getItem(PROG_PREV_THEME_KEY) || 'light'; }catch(e){}
+        if(prevTheme !== 'dark'){
+          document.body.classList.remove('dark');
+          const themeBtn = document.getElementById('themeBtn');
+          if(themeBtn){
+            themeBtn.textContent = '\u263E';
+            themeBtn.setAttribute('aria-label','Enable dark mode');
+            themeBtn.title = 'Dark mode';
+          }
+          localStorage.setItem('purple-line-theme','light');
+        }
+        let prevVoice = 'rick';
+        try{ prevVoice = localStorage.getItem(PROG_PREV_VOICE_KEY) || 'rick'; }catch(e){}
+        if(prevVoice !== selectedVoiceId) selectVoice(prevVoice);
+
+        if(defaultBtn) defaultBtn.textContent = defaultBtnOrigText;
+
+        /* stash this mode's totals and bring back the normal ones */
+        try{ localStorage.setItem(PROG_STATUS_KEY, JSON.stringify({totalWorkMs, totalBreakMs})); }catch(e){}
+        let normalStatus = {totalWorkMs:0, totalBreakMs:0};
+        try{ normalStatus = JSON.parse(localStorage.getItem(NORMAL_STATUS_STASH_KEY) || 'null') || normalStatus; }catch(e){}
+        totalWorkMs = Number(normalStatus.totalWorkMs) || 0;
+        totalBreakMs = Number(normalStatus.totalBreakMs) || 0;
+      }
+      if(statusWorkVal) statusWorkVal.textContent = formatTime(totalWorkMs);
+      if(statusBreakVal) statusBreakVal.textContent = formatTime(totalBreakMs);
+      saveTimerState();
+      renderMenuVoices();
+      render(); updateControls();
+    }
+
+    progModeBtn.addEventListener('click', ()=>{
+      setProgMode(!document.body.classList.contains('prog-mode'));
+    });
+
+    let progModeSaved = false;
+    try{ progModeSaved = localStorage.getItem(PROG_MODE_KEY)==='1'; }catch(e){}
+    if(progModeSaved) setProgMode(true);
+  })();
 
   restoreTimerState();
   render();
