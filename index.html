@@ -1110,12 +1110,6 @@
   .custom-minute-shortcuts{display:flex;flex-wrap:wrap;gap:6px}
   .custom-minute-shortcuts button{min-width:38px;padding:7px 8px;border-radius:8px;border:1px solid rgba(147,51,234,.2);background:var(--input-bg);color:var(--text-secondary);cursor:pointer}
   .custom-minute-shortcuts button.active{background:var(--purple-core);border-color:var(--purple-core);color:#fff}
-  .custom-break-title{font-size:12px;font-weight:600;color:var(--text-secondary);margin:14px 0 8px}
-  .custom-break-input-row{display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--text-secondary);font-size:12px}
-  #customBreakMinutesInput{width:80px;padding:8px 10px;border:1px solid rgba(147,51,234,.25);border-radius:8px;background:var(--app-surface);color:var(--text-primary);font:inherit}
-  .custom-break-shortcuts{display:flex;flex-wrap:wrap;gap:6px}
-  .custom-break-shortcuts button{min-width:38px;padding:7px 8px;border-radius:8px;border:1px solid rgba(147,51,234,.2);background:var(--input-bg);color:var(--text-secondary);cursor:pointer}
-  .custom-break-shortcuts button.active{background:var(--purple-core);border-color:var(--purple-core);color:#fff}
   .task-label,.label.rest-label{max-width:calc(100vw - 12px)}
   .task-label .txt{max-width:min(44vw,180px);white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25}
   .label.rest-label{max-width:min(80vw,300px);text-align:center}
@@ -1173,7 +1167,7 @@
 <meta name="apple-mobile-web-app-title" content="Purple Line">
 <script>
 if ("serviceWorker" in navigator) {
-  const PURPLE_LINE_SW_VERSION = "13";
+  const PURPLE_LINE_SW_VERSION = "11";
   let purpleLineReloading = false;
 
   const reloadAfterControllerChange = () => {
@@ -1323,17 +1317,6 @@ if ("serviceWorker" in navigator) {
         <button type="button" data-minutes="55">55</button>
         <button type="button" data-minutes="60">60</button>
       </div>
-      <div class="custom-break-title">Break time</div>
-      <div class="custom-break-input-row">
-        <input id="customBreakMinutesInput" type="number" min="1" max="120" value="5" inputmode="numeric">
-        <span>minutes</span>
-      </div>
-      <div id="customBreakShortcuts" class="custom-break-shortcuts">
-        <button type="button" data-minutes="5">5</button>
-        <button type="button" data-minutes="10">10</button>
-        <button type="button" data-minutes="15">15</button>
-        <button type="button" data-minutes="20">20</button>
-      </div>
     </div>
     <div class="pomodoro-toggle-row" id="pomodoroToggleRow">
       <span>Pomodoro (25m countdown)</span>
@@ -1404,8 +1387,6 @@ if ("serviceWorker" in navigator) {
   const customTimerPanel = document.getElementById('customTimerPanel');
   const customMinutesInput = document.getElementById('customMinutesInput');
   const customMinuteShortcuts = document.getElementById('customMinuteShortcuts');
-  const customBreakMinutesInput = document.getElementById('customBreakMinutesInput');
-  const customBreakShortcuts = document.getElementById('customBreakShortcuts');
   const pomoTomato = document.getElementById('pomoTomato');
   const recallBanner = document.getElementById('recallBanner');
   const recallList = document.getElementById('recallList');
@@ -1471,6 +1452,35 @@ if ("serviceWorker" in navigator) {
 
   const breakStartAudio = new Audio();
   const breakEndAudio = new Audio();
+
+  /* Background audio keep-alive: Android/Chrome is much less likely to
+     suspend the page while an audio session is actively playing. It is
+     started only after the user starts the timer and is completely silent.
+     This helps voice lines continue when the screen is locked/backgrounded.
+     It cannot keep a PWA alive after Android fully kills the app process. */
+  const backgroundKeepAlive = new Audio();
+  backgroundKeepAlive.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAAA';
+  backgroundKeepAlive.loop = true;
+  backgroundKeepAlive.preload = 'auto';
+  backgroundKeepAlive.volume = 0.00001;
+
+  let backgroundKeepAliveActive = false;
+  async function startBackgroundKeepAlive(){
+    if(backgroundKeepAliveActive) return;
+    if(phase!=='work' && phase!=='break') return;
+    try{
+      backgroundKeepAlive.currentTime = 0;
+      backgroundKeepAlive.volume = 0.00001;
+      const p = backgroundKeepAlive.play();
+      if(p && p.catch) await p.catch(()=>{});
+      if(!backgroundKeepAlive.paused) backgroundKeepAliveActive = true;
+    }catch(e){}
+  }
+  function stopBackgroundKeepAlive(){
+    backgroundKeepAliveActive = false;
+    try{ backgroundKeepAlive.pause(); backgroundKeepAlive.currentTime = 0; }catch(e){}
+  }
+
   const voiceVolumeSlider = document.getElementById('voiceVolumeSlider');
   const voiceVolumeVal = document.getElementById('voiceVolumeVal');
   let voiceVolume = 0.9;
@@ -1654,7 +1664,6 @@ if ("serviceWorker" in navigator) {
   let restTip = null;
   const WORK_DURATION = 25 * 60 * 1000;
   let customWorkDuration = 25 * 60 * 1000;
-  let customBreakDuration = 5 * 60 * 1000;
   const BREAK_OPTIONS = [5,10,15];
   let breakIdx = 0;
   let breakDuration = 0; // current total break duration in ms (dynamic, can be extended)
@@ -1674,114 +1683,6 @@ if ("serviceWorker" in navigator) {
   let totalWorkMs = 0;
   let totalBreakMs = 0;
   let lastTickAt = 0;
-
-  /* ---------- persistent timer state for background / screen-off resume ----------
-     The timer is based on real timestamps, not on how often setInterval fires.
-     This keeps the countdown correct when the browser throttles the page.
-     A PWA still cannot guarantee future audio playback after Android completely
-     kills the browser process; in that case the state is restored and the end
-     voice is attempted as soon as the app is opened again. */
-  const TIMER_STATE_KEY = 'purple-line-timer-state-v1';
-  let timerStateVoicePending = null;
-
-  function saveTimerState(){
-    try{
-      localStorage.setItem(TIMER_STATE_KEY, JSON.stringify({
-        phase,
-        activeTaskId,
-        phaseStartedAt,
-        elapsedWork,
-        breakStartedAt,
-        breakDuration,
-        totalWorkMs,
-        totalBreakMs,
-        customWorkDuration,
-        customBreakDuration,
-        baseMode,
-        pomodoroOn,
-        breakIdx,
-        savedAt: Date.now()
-      }));
-    }catch(e){}
-  }
-
-  function clearTimerState(){
-    try{ localStorage.removeItem(TIMER_STATE_KEY); }catch(e){}
-  }
-
-  function restoreTimerState(){
-    try{
-      const saved = JSON.parse(localStorage.getItem(TIMER_STATE_KEY) || 'null');
-      if(!saved) return;
-
-      activeTaskId = saved.activeTaskId ?? null;
-      phaseStartedAt = Number(saved.phaseStartedAt) || 0;
-      elapsedWork = Number(saved.elapsedWork) || 0;
-      breakStartedAt = Number(saved.breakStartedAt) || 0;
-      breakDuration = Number(saved.breakDuration) || 0;
-      totalWorkMs = Number(saved.totalWorkMs) || 0;
-      totalBreakMs = Number(saved.totalBreakMs) || 0;
-      customWorkDuration = Number(saved.customWorkDuration) || customWorkDuration;
-      customBreakDuration = Number(saved.customBreakDuration) || customBreakDuration;
-      if(customBreakMinutesInput){ customBreakMinutesInput.value = String(Math.round(customBreakDuration/60000)); }
-      if(customBreakShortcuts){ customBreakShortcuts.querySelectorAll('button').forEach(b=>b.classList.toggle('active', Number(b.dataset.minutes)===Math.round(customBreakDuration/60000))); }
-      baseMode = saved.baseMode || baseMode;
-      pomodoroOn = !!saved.pomodoroOn;
-      breakIdx = Number.isFinite(Number(saved.breakIdx)) ? Number(saved.breakIdx) : breakIdx;
-      phase = saved.phase || 'idle';
-
-      if(!tasks.some(t=>t.id===activeTaskId)) activeTaskId = null;
-
-      if(phase==='work' && phaseStartedAt){
-        const elapsedNow = elapsedWork + (Date.now()-phaseStartedAt);
-        if(elapsedNow >= getWorkDuration()){
-          elapsedWork = getWorkDuration();
-          phase = 'idle';
-          phaseStartedAt = 0;
-          clearInterval(timerId); timerId=null;
-        }else{
-          lastTickAt = Date.now();
-          clearInterval(timerId);
-          timerId = setInterval(tick,100);
-        }
-      }else if(phase==='break' && breakStartedAt && breakDuration){
-        const breakElapsed = Date.now()-breakStartedAt;
-        if(breakElapsed >= breakDuration){
-          /* The end event happened while the page was not running. */
-          timerStateVoicePending = 'end';
-          phase = 'idle';
-          clearInterval(timerId); timerId=null;
-          breakDashPhase=null;
-          breakDashProgress=0;
-          taskTip=null;
-          restTip=null;
-          restSkipOpen=false;
-        }else{
-          lastTickAt = Date.now();
-          clearInterval(timerId);
-          timerId = setInterval(tick,30);
-        }
-      }
-      updateControls();
-      render();
-      saveTimerState();
-    }catch(e){
-      console.warn('Timer state restore failed', e);
-    }
-  }
-
-  function reconcileBackgroundTimer(){
-    if(phase==='work' || phase==='break'){
-      tick();
-      saveTimerState();
-    }
-
-    if(timerStateVoicePending==='end'){
-      timerStateVoicePending = null;
-      /* Best effort: if the browser allows audio now, play the saved end line. */
-      try{ playBreakEndSound(); }catch(e){}
-    }
-  }
 
   /* ---------- daily reset at 12:00 AM Egypt time ---------- */
   function egyptDateStr(){
@@ -1835,7 +1736,7 @@ if ("serviceWorker" in navigator) {
   }
 
   function getBreakDuration(){
-    return baseMode==='custom' ? customBreakDuration : breakDuration;
+    return breakDuration;
   }
 
   function getWorkDuration(){
@@ -1916,15 +1817,11 @@ if ("serviceWorker" in navigator) {
     try{if(wakeLock){await wakeLock.release();wakeLock=null;}}catch(e){}
   }
   document.addEventListener('visibilitychange',()=>{
-    if(document.visibilityState==='visible'){
-      reconcileBackgroundTimer();
-      if(phase==='work'||phase==='break') requestScreenWakeLock();
-    }else{
-      saveTimerState();
+    if(document.visibilityState==='visible' && (phase==='work'||phase==='break')) {
+      requestScreenWakeLock();
+      startBackgroundKeepAlive();
     }
   });
-  window.addEventListener('pagehide', saveTimerState);
-  window.addEventListener('beforeunload', saveTimerState);
 
   function stopVoices(){
     [breakStartAudio, breakEndAudio].forEach(a=>{
@@ -1941,10 +1838,10 @@ if ("serviceWorker" in navigator) {
     }else{
       phase='work'; phaseStartedAt=Date.now();
       clearInterval(timerId); lastTickAt=0; timerId=setInterval(tick,100);
+      startBackgroundKeepAlive();
     }
     render(); updateControls();
-    saveTimerState();
-    if(phase==='work') requestScreenWakeLock(); else releaseScreenWakeLock();
+    if(phase==='work') requestScreenWakeLock(); else { releaseScreenWakeLock(); stopBackgroundKeepAlive(); }
   }
 
   function startBreak(){
@@ -1952,7 +1849,7 @@ if ("serviceWorker" in navigator) {
     if(phase!=='work'||!activeTaskId)return;
     elapsedWork+=Date.now()-phaseStartedAt;
     phase='break'; breakStartedAt=Date.now();
-    breakDuration = baseMode==='custom' ? customBreakDuration : BREAK_OPTIONS[breakIdx]*60*1000;
+    breakDuration = BREAK_OPTIONS[breakIdx]*60*1000;
     const sf = scaleFactor();
     const c=center();
     const active=tasks.find(t=>t.id===activeTaskId);
@@ -1969,11 +1866,11 @@ if ("serviceWorker" in navigator) {
     restSkipOpen = false;
 
     playBreakStartSound();
+    startBackgroundKeepAlive();
 
     clearInterval(timerId); lastTickAt=0; timerId=setInterval(tick,30);
     render();
     updateControls();
-    saveTimerState();
     requestScreenWakeLock();
   }
 
@@ -1989,12 +1886,11 @@ if ("serviceWorker" in navigator) {
     restSkipOpen = false;
     breakBigTimer.classList.remove('visible');
     breakBigTimer.classList.remove('skip-open');
-    saveTimerState();
     setTimeout(()=>{
       elapsedWork=0; phase='work'; phaseStartedAt=Date.now();
+      startBackgroundKeepAlive();
       render(); updateControls();
       lastTickAt=0; timerId=setInterval(tick,100);
-      saveTimerState();
     },300);
   }
 
@@ -2087,27 +1983,6 @@ if ("serviceWorker" in navigator) {
     render(); updateControls();
   });
 
-  customBreakShortcuts.querySelectorAll('button').forEach(btn=>{
-    btn.addEventListener('click',()=>{
-      const minutes=Number(btn.dataset.minutes);
-      customBreakMinutesInput.value=minutes;
-      customBreakDuration=minutes*60*1000;
-      customBreakShortcuts.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b===btn));
-      saveTimerState();
-      render(); updateControls();
-    });
-  });
-
-  customBreakMinutesInput.addEventListener('input',()=>{
-    let minutes=Number(customBreakMinutesInput.value);
-    if(!Number.isFinite(minutes)) return;
-    minutes=Math.max(1,Math.min(120,minutes));
-    customBreakDuration=minutes*60*1000;
-    customBreakShortcuts.querySelectorAll('button').forEach(b=>b.classList.toggle('active',Number(b.dataset.minutes)===minutes));
-    saveTimerState();
-    render(); updateControls();
-  });
-
   pomodoroToggle.addEventListener('click', ()=>{
     if(baseMode==='custom') return;
     pomodoroOn = !pomodoroOn;
@@ -2137,11 +2012,6 @@ if ("serviceWorker" in navigator) {
     }
     menuStatusPanel.classList.toggle('open', opening);
   });
-
-  // Initialize the Custom break shortcut selection.
-  if(customBreakShortcuts){
-    customBreakShortcuts.querySelectorAll('button').forEach(b=>b.classList.toggle('active', Number(b.dataset.minutes)===Math.round(customBreakDuration/60000)));
-  }
 
   function updateRecallBanner(){
     const completedParts = tasks.filter(t=>t.group && t.recallDone);
@@ -2277,7 +2147,6 @@ if ("serviceWorker" in navigator) {
     tasks=[];
     uid=1;
     try{localStorage.removeItem(TASKS_STORAGE_KEY);}catch(e){}
-    clearTimerState();
     phase='idle'; elapsedWork=0; activeTaskId=null;
     breakDashPhase=null; breakDashProgress=0;
     taskTip=null; restTip=null; breakDuration=0;
@@ -2756,7 +2625,6 @@ if ("serviceWorker" in navigator) {
     resizeT = setTimeout(()=>render(), 120);
   });
 
-  restoreTimerState();
   render();
   updateControls();
 })();
@@ -2764,3 +2632,4 @@ if ("serviceWorker" in navigator) {
 
 </body>
 </html>
+
