@@ -1110,6 +1110,12 @@
   .custom-minute-shortcuts{display:flex;flex-wrap:wrap;gap:6px}
   .custom-minute-shortcuts button{min-width:38px;padding:7px 8px;border-radius:8px;border:1px solid rgba(147,51,234,.2);background:var(--input-bg);color:var(--text-secondary);cursor:pointer}
   .custom-minute-shortcuts button.active{background:var(--purple-core);border-color:var(--purple-core);color:#fff}
+  .custom-break-title{font-size:12px;font-weight:600;color:var(--text-secondary);margin:14px 0 8px}
+  .custom-break-input-row{display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--text-secondary);font-size:12px}
+  #customBreakMinutesInput{width:80px;padding:8px 10px;border:1px solid rgba(147,51,234,.25);border-radius:8px;background:var(--app-surface);color:var(--text-primary);font:inherit}
+  .custom-break-shortcuts{display:flex;flex-wrap:wrap;gap:6px}
+  .custom-break-shortcuts button{min-width:38px;padding:7px 8px;border-radius:8px;border:1px solid rgba(147,51,234,.2);background:var(--input-bg);color:var(--text-secondary);cursor:pointer}
+  .custom-break-shortcuts button.active{background:var(--purple-core);border-color:var(--purple-core);color:#fff}
   .task-label,.label.rest-label{max-width:calc(100vw - 12px)}
   .task-label .txt{max-width:min(44vw,180px);white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25}
   .label.rest-label{max-width:min(80vw,300px);text-align:center}
@@ -1167,7 +1173,7 @@
 <meta name="apple-mobile-web-app-title" content="Purple Line">
 <script>
 if ("serviceWorker" in navigator) {
-  const PURPLE_LINE_SW_VERSION = "12";
+  const PURPLE_LINE_SW_VERSION = "13";
   let purpleLineReloading = false;
 
   const reloadAfterControllerChange = () => {
@@ -1317,6 +1323,17 @@ if ("serviceWorker" in navigator) {
         <button type="button" data-minutes="55">55</button>
         <button type="button" data-minutes="60">60</button>
       </div>
+      <div class="custom-break-title">Break time</div>
+      <div class="custom-break-input-row">
+        <input id="customBreakMinutesInput" type="number" min="1" max="120" value="5" inputmode="numeric">
+        <span>minutes</span>
+      </div>
+      <div id="customBreakShortcuts" class="custom-break-shortcuts">
+        <button type="button" data-minutes="5">5</button>
+        <button type="button" data-minutes="10">10</button>
+        <button type="button" data-minutes="15">15</button>
+        <button type="button" data-minutes="20">20</button>
+      </div>
     </div>
     <div class="pomodoro-toggle-row" id="pomodoroToggleRow">
       <span>Pomodoro (25m countdown)</span>
@@ -1387,6 +1404,8 @@ if ("serviceWorker" in navigator) {
   const customTimerPanel = document.getElementById('customTimerPanel');
   const customMinutesInput = document.getElementById('customMinutesInput');
   const customMinuteShortcuts = document.getElementById('customMinuteShortcuts');
+  const customBreakMinutesInput = document.getElementById('customBreakMinutesInput');
+  const customBreakShortcuts = document.getElementById('customBreakShortcuts');
   const pomoTomato = document.getElementById('pomoTomato');
   const recallBanner = document.getElementById('recallBanner');
   const recallList = document.getElementById('recallList');
@@ -1635,6 +1654,7 @@ if ("serviceWorker" in navigator) {
   let restTip = null;
   const WORK_DURATION = 25 * 60 * 1000;
   let customWorkDuration = 25 * 60 * 1000;
+  let customBreakDuration = 5 * 60 * 1000;
   const BREAK_OPTIONS = [5,10,15];
   let breakIdx = 0;
   let breakDuration = 0; // current total break duration in ms (dynamic, can be extended)
@@ -1676,6 +1696,7 @@ if ("serviceWorker" in navigator) {
         totalWorkMs,
         totalBreakMs,
         customWorkDuration,
+        customBreakDuration,
         baseMode,
         pomodoroOn,
         breakIdx,
@@ -1701,6 +1722,9 @@ if ("serviceWorker" in navigator) {
       totalWorkMs = Number(saved.totalWorkMs) || 0;
       totalBreakMs = Number(saved.totalBreakMs) || 0;
       customWorkDuration = Number(saved.customWorkDuration) || customWorkDuration;
+      customBreakDuration = Number(saved.customBreakDuration) || customBreakDuration;
+      if(customBreakMinutesInput){ customBreakMinutesInput.value = String(Math.round(customBreakDuration/60000)); }
+      if(customBreakShortcuts){ customBreakShortcuts.querySelectorAll('button').forEach(b=>b.classList.toggle('active', Number(b.dataset.minutes)===Math.round(customBreakDuration/60000))); }
       baseMode = saved.baseMode || baseMode;
       pomodoroOn = !!saved.pomodoroOn;
       breakIdx = Number.isFinite(Number(saved.breakIdx)) ? Number(saved.breakIdx) : breakIdx;
@@ -1811,7 +1835,7 @@ if ("serviceWorker" in navigator) {
   }
 
   function getBreakDuration(){
-    return breakDuration;
+    return baseMode==='custom' ? customBreakDuration : breakDuration;
   }
 
   function getWorkDuration(){
@@ -1928,7 +1952,7 @@ if ("serviceWorker" in navigator) {
     if(phase!=='work'||!activeTaskId)return;
     elapsedWork+=Date.now()-phaseStartedAt;
     phase='break'; breakStartedAt=Date.now();
-    breakDuration = BREAK_OPTIONS[breakIdx]*60*1000;
+    breakDuration = baseMode==='custom' ? customBreakDuration : BREAK_OPTIONS[breakIdx]*60*1000;
     const sf = scaleFactor();
     const c=center();
     const active=tasks.find(t=>t.id===activeTaskId);
@@ -2063,6 +2087,27 @@ if ("serviceWorker" in navigator) {
     render(); updateControls();
   });
 
+  customBreakShortcuts.querySelectorAll('button').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const minutes=Number(btn.dataset.minutes);
+      customBreakMinutesInput.value=minutes;
+      customBreakDuration=minutes*60*1000;
+      customBreakShortcuts.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b===btn));
+      saveTimerState();
+      render(); updateControls();
+    });
+  });
+
+  customBreakMinutesInput.addEventListener('input',()=>{
+    let minutes=Number(customBreakMinutesInput.value);
+    if(!Number.isFinite(minutes)) return;
+    minutes=Math.max(1,Math.min(120,minutes));
+    customBreakDuration=minutes*60*1000;
+    customBreakShortcuts.querySelectorAll('button').forEach(b=>b.classList.toggle('active',Number(b.dataset.minutes)===minutes));
+    saveTimerState();
+    render(); updateControls();
+  });
+
   pomodoroToggle.addEventListener('click', ()=>{
     if(baseMode==='custom') return;
     pomodoroOn = !pomodoroOn;
@@ -2092,6 +2137,11 @@ if ("serviceWorker" in navigator) {
     }
     menuStatusPanel.classList.toggle('open', opening);
   });
+
+  // Initialize the Custom break shortcut selection.
+  if(customBreakShortcuts){
+    customBreakShortcuts.querySelectorAll('button').forEach(b=>b.classList.toggle('active', Number(b.dataset.minutes)===Math.round(customBreakDuration/60000)));
+  }
 
   function updateRecallBanner(){
     const completedParts = tasks.filter(t=>t.group && t.recallDone);
