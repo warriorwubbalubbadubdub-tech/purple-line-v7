@@ -364,7 +364,6 @@
   .label .txt{
     display:inline-block;
     transition:transform 0.18s cubic-bezier(.3,1.4,.4,1);
-    transform-origin:center;
   }
   .label .txt.held{
     transform:scale(1.4);
@@ -2359,6 +2358,20 @@ if ("serviceWorker" in navigator) {
       const span = document.createElement('span');
       span.className='txt';
       span.textContent = text;
+
+      // Keep the text anchored to the line when it grows on touch.
+      if (d.dx > 0.2) {
+        span.style.transformOrigin = 'left center';
+      } else if (d.dx < -0.2) {
+        span.style.transformOrigin = 'right center';
+      } else if (d.dy > 0.25) {
+        span.style.transformOrigin = 'center top';
+      } else if (d.dy < -0.25) {
+        span.style.transformOrigin = 'center bottom';
+      } else {
+        span.style.transformOrigin = 'center center';
+      }
+
       span.onclick = (e)=>{
         e.stopPropagation();
         if(task.done)return;
