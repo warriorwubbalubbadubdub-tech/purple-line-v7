@@ -1173,7 +1173,7 @@
 <meta name="apple-mobile-web-app-title" content="Purple Line">
 <script>
 if ("serviceWorker" in navigator) {
-  const PURPLE_LINE_SW_VERSION = "13";
+  const PURPLE_LINE_SW_VERSION = "14";
   let purpleLineReloading = false;
 
   const reloadAfterControllerChange = () => {
@@ -1510,11 +1510,33 @@ if ("serviceWorker" in navigator) {
     return activeBreakClip;
   }
 
+  function prepareVoiceClip(clip){
+    if(!clip) return;
+    try{
+      if(clip.start && breakStartAudio.src !== new URL(clip.start, location.href).href){
+        breakStartAudio.src = clip.start;
+        breakStartAudio.preload = 'auto';
+        breakStartAudio.load();
+      }
+      if(clip.end && breakEndAudio.src !== new URL(clip.end, location.href).href){
+        breakEndAudio.src = clip.end;
+        breakEndAudio.preload = 'auto';
+        breakEndAudio.load();
+      }
+    }catch(e){}
+  }
+
   function selectVoice(id){
     if(id===selectedVoiceId)return;
     selectedVoiceId = id;
     localStorage.setItem('purple-line-voice', id);
     renderMenuVoices();
+    const pack = VOICE_PACKS.find(v=>v.id===selectedVoiceId) || VOICE_PACKS[0];
+    if(pack.variants && pack.variants.length){
+      prepareVoiceClip(pack.variants[0]);
+    }else{
+      prepareVoiceClip({start:pack.start,end:pack.end});
+    }
   }
 
   /* Mobile audio unlock: prime the existing playback elements on the first
@@ -1545,6 +1567,16 @@ if ("serviceWorker" in navigator) {
         }
       }catch(e){}
     });
+    /* Preload the real voice files while we are still in a user-initiated
+       gesture. This is important on mobile: changing src + load() at the
+       exact moment the phone is locked/backgrounded is much less reliable. */
+    const pack = VOICE_PACKS.find(v=>v.id===selectedVoiceId) || VOICE_PACKS[0];
+    if(pack.variants && pack.variants.length){
+      prepareVoiceClip(pack.variants[0]);
+    }else{
+      prepareVoiceClip({start:pack.start,end:pack.end});
+    }
+
     /* Do not let the unlock/prime playback count as a real voice line. */
     setTimeout(()=>{ audioPriming = false; }, 350);
     /* If a work/break session is already running by the time the user
@@ -1647,16 +1679,24 @@ if ("serviceWorker" in navigator) {
   function forcePlay(audioEl, url){
     const token = ++voicePlayToken;
     if(url){
-      audioEl.src = url;
-      audioEl.load();
+      try{
+        const absoluteUrl = new URL(url, location.href).href;
+        /* Do NOT call load() again if this clip was already prepared while the
+           app was foregrounded. Re-loading at the alarm moment can fail on
+           locked/backgrounded mobile browsers. */
+        if(audioEl.src !== absoluteUrl){
+          audioEl.src = url;
+          audioEl.preload = 'auto';
+          audioEl.load();
+        }
+      }catch(e){}
     }
     try{ audioEl.volume = voiceVolume; audioEl.currentTime=0; }catch(e){}
     const p = audioEl.play();
     if(p && p.catch){
       p.catch(()=>{
         if(token !== voicePlayToken) return;
-        /* Retry without replacing the source. This avoids the old behavior
-           where a delayed retry could stop/restart a line unexpectedly. */
+        /* Retry without replacing the source. */
         setTimeout(()=>{
           if(token !== voicePlayToken) return;
           try{ audioEl.volume=voiceVolume; audioEl.currentTime=0; audioEl.play().catch(()=>{}); }catch(e){}
@@ -1665,11 +1705,15 @@ if ("serviceWorker" in navigator) {
     }
   }
   function playBreakStartSound(){
-    const clip = pickActiveClip();
+    const clip = activeBreakClip || pickActiveClip();
+    activeBreakClip = clip;
+    prepareVoiceClip(clip);
     forcePlay(breakStartAudio, clip.start);
   }
   function playBreakEndSound(){
     const clip = activeBreakClip || pickActiveClip();
+    activeBreakClip = clip;
+    prepareVoiceClip(clip);
     forcePlay(breakEndAudio, clip.end);
   }
 
@@ -2032,6 +2076,16 @@ if ("serviceWorker" in navigator) {
     breakDashAnimStart = Date.now();
     restSkipOpen = false;
 
+    /* Choose the voice once for this break and prepare BOTH start/end clips
+       before the app can be backgrounded or the screen can be locked. */
+    activeBreakClip = null;
+    const breakVoicePack = VOICE_PACKS.find(v=>v.id===selectedVoiceId) || VOICE_PACKS[0];
+    if(breakVoicePack.variants && breakVoicePack.variants.length){
+      activeBreakClip = breakVoicePack.variants[Math.floor(Math.random()*breakVoicePack.variants.length)];
+    }else{
+      activeBreakClip = {start:breakVoicePack.start,end:breakVoicePack.end};
+    }
+    prepareVoiceClip(activeBreakClip);
     playBreakStartSound();
 
     clearInterval(timerId); lastTickAt=0; timerId=setInterval(tick,30);
@@ -2057,6 +2111,7 @@ if ("serviceWorker" in navigator) {
     saveTimerState();
     setTimeout(()=>{
       elapsedWork=0; phase='work'; phaseStartedAt=Date.now();
+      activeBreakClip = null;
       render(); updateControls();
       lastTickAt=0; timerId=setInterval(tick,100);
       saveTimerState();
