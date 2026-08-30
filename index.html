@@ -1503,9 +1503,11 @@ if ("serviceWorker" in navigator) {
      real gesture, but never allow the priming promise to interrupt a real
      voice line that has already started. */
   let audioPrimed = false;
+  let audioPriming = false;
   function unlockBreakAudio(){
     if(audioPrimed) return;
     audioPrimed = true;
+    audioPriming = true;
     [breakStartAudio, breakEndAudio].forEach(a=>{
       try{
         const wasMuted = a.muted;
@@ -1525,6 +1527,8 @@ if ("serviceWorker" in navigator) {
         }
       }catch(e){}
     });
+    /* Do not let the unlock/prime playback count as a real voice line. */
+    setTimeout(()=>{ audioPriming = false; }, 350);
   }
   document.addEventListener('pointerdown', unlockBreakAudio, { once:true, passive:true });
   document.addEventListener('touchstart', unlockBreakAudio, { once:true, passive:true });
@@ -1544,11 +1548,14 @@ if ("serviceWorker" in navigator) {
     skipVoiceBtn.classList.remove('visible');
   }
   [breakStartAudio, breakEndAudio].forEach(a=>{
-    a.addEventListener('play', ()=> showSkipVoice(a));
+    a.addEventListener('play', ()=> {
+      /* The hidden muted audio used for mobile unlock must never show Skip voice. */
+      if(!audioPriming) showSkipVoice(a);
+    });
     a.addEventListener('ended', ()=> hideSkipVoice(a));
     a.addEventListener('pause', ()=> {
       /* A pause caused by Skip is handled below; natural pauses also hide it. */
-      hideSkipVoice(a);
+      if(!audioPriming) hideSkipVoice(a);
     });
   });
   skipVoiceBtn.addEventListener('click', (e)=>{
