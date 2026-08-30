@@ -1510,6 +1510,76 @@ if ("serviceWorker" in navigator) {
     return activeBreakClip;
   }
 
+  /* Background-safe end-voice scheduler. The voice is decoded while the app
+     is active and then scheduled on the Web Audio clock. This avoids relying
+     on setTimeout/setInterval to wake the page after the screen is locked. */
+  let voiceAudioContext = null;
+  let scheduledEndVoice = null;
+  let endVoiceScheduled = false;
+  const decodedVoiceBuffers = new Map();
+  const voiceBufferPromises = new Map();
+
+  function getVoiceAudioContext(){
+    if(!voiceAudioContext){
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if(!AC) return null;
+      try{ voiceAudioContext = new AC(); }catch(e){ return null; }
+    }
+    return voiceAudioContext;
+  }
+
+  async function preloadVoiceBuffer(url){
+    if(!url) return null;
+    if(decodedVoiceBuffers.has(url)) return decodedVoiceBuffers.get(url);
+    if(voiceBufferPromises.has(url)) return voiceBufferPromises.get(url);
+    const ctx = getVoiceAudioContext();
+    if(!ctx) return null;
+    const promise = fetch(url, {cache:'force-cache'})
+      .then(r=>{ if(!r.ok) throw new Error('Voice fetch failed: '+r.status); return r.arrayBuffer(); })
+      .then(data=>ctx.decodeAudioData(data))
+      .then(buffer=>{ decodedVoiceBuffers.set(url,buffer); voiceBufferPromises.delete(url); return buffer; })
+      .catch(e=>{ voiceBufferPromises.delete(url); console.warn('[Purple Line] Voice preload failed:',url,e); return null; });
+    voiceBufferPromises.set(url,promise);
+    return promise;
+  }
+
+  function cancelScheduledEndVoice(){
+    endVoiceScheduled=false;
+    if(scheduledEndVoice){
+      try{ scheduledEndVoice.stop(0); }catch(e){}
+      try{ scheduledEndVoice.disconnect(); }catch(e){}
+      scheduledEndVoice=null;
+    }
+  }
+
+  async function scheduleBreakEndVoice(url, delayMs){
+    cancelScheduledEndVoice();
+    const ctx=getVoiceAudioContext();
+    if(!ctx || !url) return false;
+    try{
+      if(ctx.state==='suspended') await ctx.resume();
+      const buffer=await preloadVoiceBuffer(url);
+      if(!buffer || phase!=='break' || !breakStartedAt || !breakDuration) return false;
+      const source=ctx.createBufferSource();
+      const gain=ctx.createGain();
+      source.buffer=buffer;
+      gain.gain.value=voiceVolume;
+      source.connect(gain);
+      gain.connect(ctx.destination);
+      source.start(ctx.currentTime + Math.max(0,delayMs)/1000);
+      scheduledEndVoice=source;
+      endVoiceScheduled=true;
+      source.onended=()=>{
+        if(scheduledEndVoice===source) scheduledEndVoice=null;
+        try{ source.disconnect(); gain.disconnect(); }catch(e){}
+      };
+      return true;
+    }catch(e){
+      console.warn('[Purple Line] Could not schedule end voice:',e);
+      return false;
+    }
+  }
+
   function prepareVoiceClip(clip){
     if(!clip) return;
     try{
@@ -1545,6 +1615,23 @@ if ("serviceWorker" in navigator) {
   let audioPrimed = false;
   let audioPriming = false;
   function unlockBreakAudio(){
+    try{
+      const ctx=getVoiceAudioContext();
+      if(ctx && ctx.state==='suspended') ctx.resume().catch(()=>{});
+    }catch(e){}
+    try{
+      /* Decode every available voice during the first user gesture. This is
+         intentional: if the phone is locked immediately after Start, the end
+         clip is already in memory and does not need a background network fetch. */
+      VOICE_PACKS.forEach(pack=>{
+        if(pack.variants && pack.variants.length){
+          pack.variants.forEach(v=>{ preloadVoiceBuffer(v.start); preloadVoiceBuffer(v.end); });
+        }else if(pack.start && pack.end){
+          preloadVoiceBuffer(pack.start);
+          preloadVoiceBuffer(pack.end);
+        }
+      });
+    }catch(e){}
     if(audioPrimed) return;
     audioPrimed = true;
     audioPriming = true;
@@ -1708,6 +1795,8 @@ if ("serviceWorker" in navigator) {
     const clip = activeBreakClip || pickActiveClip();
     activeBreakClip = clip;
     prepareVoiceClip(clip);
+    preloadVoiceBuffer(clip.start);
+    preloadVoiceBuffer(clip.end);
     forcePlay(breakStartAudio, clip.start);
   }
   function playBreakEndSound(){
@@ -2041,6 +2130,7 @@ if ("serviceWorker" in navigator) {
 
   function startWork(){
     if(!activeTaskId)return;
+    cancelScheduledEndVoice();
     stopVoices();
     if(phase==='work'){
       elapsedWork+=Date.now()-phaseStartedAt; phase='idle';
@@ -2088,6 +2178,14 @@ if ("serviceWorker" in navigator) {
     prepareVoiceClip(activeBreakClip);
     playBreakStartSound();
 
+    /* Force the END voice onto the media/audio timeline now, while the app is
+       still foregrounded. The OS can continue the scheduled audio after lock. */
+    try{
+      if(activeBreakClip && activeBreakClip.end){
+        scheduleBreakEndVoice(activeBreakClip.end, breakDuration);
+      }
+    }catch(e){}
+
     clearInterval(timerId); lastTickAt=0; timerId=setInterval(tick,30);
     render();
     updateControls();
@@ -2098,7 +2196,9 @@ if ("serviceWorker" in navigator) {
 
   function finishBreak(){
 
-    playBreakEndSound();
+    /* If the end line was scheduled successfully, do not play it a second
+       time when the JavaScript timer catches up after backgrounding. */
+    if(!endVoiceScheduled) playBreakEndSound();
     clearInterval(timerId); timerId=null;
     releaseScreenWakeLock();
     breakDashPhase = null;
@@ -2120,6 +2220,7 @@ if ("serviceWorker" in navigator) {
 
   function skipBreakNow(){
     if(phase!=='break')return;
+    cancelScheduledEndVoice();
     finishBreak();
   }
 
