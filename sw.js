@@ -41,7 +41,10 @@ const ASSETS = [
   './durin-end.m4a',
 
   './furina-start.m4a',
-  './furina-end.m4a'
+  './furina-end.m4a',
+
+  './colombina-flins-start.m4a',
+'./colombina-flins-end.m4a',
 ];
 
 // ========================================
