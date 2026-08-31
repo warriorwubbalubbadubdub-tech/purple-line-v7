@@ -38,7 +38,10 @@ const ASSETS = [
   './paimon-end.m4a',
 
   './durin-start.m4a',
-  './durin-end.m4a'
+  './durin-end.m4a',
+
+  './furina-start.m4a',
+  './furina-end.m4a'
 ];
 
 // ========================================
