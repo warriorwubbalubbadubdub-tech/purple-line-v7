@@ -908,6 +908,23 @@
     box-shadow:0 0 0 3px rgba(249,115,22,0.24), 0 2px 10px rgba(249,115,22,0.38);
   }
 
+  .voice-chip.chip-colombina-flins{
+    /* Flins = blue side, Colombina = purple/pink side. */
+    background:linear-gradient(90deg,#101a3d 0 50%,#24163f 50% 100%);
+    border:1px solid #3a2a61;
+    color:#eeeaff;
+    box-shadow:inset 3px 0 0 #69bdf8, inset -3px 0 0 #b46cff;
+  }
+  .voice-chip.chip-colombina-flins:hover{
+    border-color:#5b477e;
+    box-shadow:inset 3px 0 0 #8bd3ff, inset -3px 0 0 #d28aff;
+  }
+  .voice-chip.chip-colombina-flins.active{
+    background:linear-gradient(90deg,#101a3d 0 50%,#24163f 50% 100%);
+    border-color:#75579e; color:#fff;
+    box-shadow:inset 4px 0 0 #69bdf8, inset -4px 0 0 #b46cff, 0 0 0 3px rgba(117,87,158,.24), 0 2px 12px rgba(36,22,63,.42);
+  }
+
   .voice-chip.chip-white{
     background:#fff;
     border-color:rgba(255,255,255,0.9);
@@ -1790,10 +1807,10 @@ if ("serviceWorker" in navigator) {
       <span>Extend break by 5 minutes</span>
       <span class="plus5-badge" id="plus5Badge">+5</span>
     </div>
-    <div class="menu-section-label tomorrow-label" id="tomorrowSectionLabel" style="display:none">🌙 Tomorrow</div>
-    <div id="tomorrowTaskList"></div>
     <div class="menu-section-label">Your Lines</div>
     <div id="menuTaskList"></div>
+    <div class="menu-section-label tomorrow-label" id="tomorrowSectionLabel" style="display:none">🌙 Tomorrow</div>
+    <div id="tomorrowTaskList"></div>
   </div>
 </div>
 
@@ -1877,6 +1894,7 @@ if ("serviceWorker" in navigator) {
     { id:'makoto', name:'Makoto Naegi', start:'./makoto-start.m4a', end:'./makoto-end.m4a' },
     { id:'darwin', name:'Darwin Waterson', start:'./darwin-start.m4a', end:'./darwin-end.m4a' },
     { id:'neuvillette', name:'Neuvillette', start:'./neuvillette-start.m4a', end:'./neuvillette-end.m4a', color:'lighterblue' },
+    { id:'colombinaFlins', name:'Flins & Colombina', start:'./colombina-flins-start.m4a', end:'./colombina-flins-end.m4a' },
     { id:'paimon', name:'Paimon', start:'./paimon-start.m4a', end:'./paimon-end.m4a', color:'white' },
     { id:'durin', name:'Durin', start:'./durin-start.m4a', end:'./durin-end.m4a', color:'fireorange' },
     { id:'alastor', name:'Alastor', start:'./alastor-start.m4a', end:'./alastor-end.m4a', color:'red' },
@@ -2240,7 +2258,7 @@ if ("serviceWorker" in navigator) {
     menuVoicePanel.innerHTML = '';
     VOICE_PACKS.forEach(pack=>{
       const chip = document.createElement('span');
-      chip.className = 'voice-chip' + (pack.color ? ' chip-'+pack.color : '') + (pack.id==='furina' ? ' chip-furina' : '') + (pack.id===selectedVoiceId ? ' active' : '');
+      chip.className = 'voice-chip' + (pack.color ? ' chip-'+pack.color : '') + (pack.id==='furina' ? ' chip-furina' : '') + (pack.id==='colombinaFlins' ? ' chip-colombina-flins' : '') + (pack.id===selectedVoiceId ? ' active' : '');
       chip.dataset.voiceId = pack.id;
       chip.innerHTML = pack.id === 'random' ? '🎲 Random' : pack.name;
       chip.addEventListener('click', ()=>{
@@ -2673,27 +2691,38 @@ if ("serviceWorker" in navigator) {
   }
 
   let wakeLock = null;
+  let appScreenAwake = true;
+
   async function requestScreenWakeLock(){
     if(!('wakeLock' in navigator)) return;
-    if(phase!=='work' && phase!=='break') return;
+    if(document.visibilityState !== 'visible') return;
+    if(!appScreenAwake) return;
     try{
       if(wakeLock && !wakeLock.released) return;
       wakeLock=await navigator.wakeLock.request('screen');
     }catch(e){}
   }
+
+  // Wake Lock normally needs a user interaction on some mobile browsers.
+  // Request it after real interaction as well, so the screen stays on while
+  // the user is using Purple Line even when no timer is currently running.
+  ['pointerdown','touchstart','keydown'].forEach(evt=>{
+    document.addEventListener(evt, ()=>requestScreenWakeLock(), {passive:true});
+  });
   async function releaseScreenWakeLock(){
     try{if(wakeLock){await wakeLock.release();wakeLock=null;}}catch(e){}
   }
   document.addEventListener('visibilitychange',()=>{
     if(document.visibilityState==='visible'){
       reconcileBackgroundTimer();
-      if(phase==='work'||phase==='break') requestScreenWakeLock();
+      requestScreenWakeLock();
     }else{
       saveTimerState();
     }
   });
   window.addEventListener('pagehide', saveTimerState);
   window.addEventListener('beforeunload', saveTimerState);
+  window.addEventListener('load', ()=>requestScreenWakeLock());
 
   function stopVoices(){
     [breakStartAudio, breakEndAudio].forEach(a=>{
@@ -2813,7 +2842,15 @@ if ("serviceWorker" in navigator) {
     skipBreakNow();
   });
 
+  let menuHistoryStateActive = false;
+
   function openMenu(){
+    if(!menuOverlay.classList.contains('open')){
+      try{
+        history.pushState({ ...(history.state || {}), purpleLineMenu:true }, '', location.href);
+        menuHistoryStateActive = true;
+      }catch(e){}
+    }
     menuOverlay.classList.add('open');
     menuSheet.classList.add('open');
     menuTaskInput.value='';
@@ -2821,10 +2858,25 @@ if ("serviceWorker" in navigator) {
     renderMenuTasks();
     renderTomorrowList();
   }
-  function closeMenu(){
+
+  function closeMenu(fromPopState=false){
     menuOverlay.classList.remove('open');
     menuSheet.classList.remove('open');
+
+    if(menuHistoryStateActive && !fromPopState){
+      menuHistoryStateActive = false;
+      try{ history.back(); }catch(e){}
+    }else if(fromPopState){
+      menuHistoryStateActive = false;
+    }
   }
+
+  window.addEventListener('popstate', ()=>{
+    if(menuOverlay.classList.contains('open')){
+      closeMenu(true);
+    }
+  });
+
   menuToggleBtn.addEventListener('click',openMenu);
   menuOverlay.addEventListener('click',closeMenu);
   menuClose.addEventListener('click',closeMenu);
