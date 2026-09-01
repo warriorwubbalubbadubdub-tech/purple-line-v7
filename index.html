@@ -4168,17 +4168,28 @@ if ("serviceWorker" in navigator) {
   })();
 
   /* ---------- Study Rooms ----------
-     Online rooms use WebRTC through PeerJS. The normal Purple Line app
-     remains local/offline; networking is loaded only when a room is opened.
-     No local server, IP address, port, or per-device setup is required.
+     Only two rooms exist and both are hard-coded below — there is no way
+     to create a room from the UI. Presence (who else is in the room, their
+     mode, their timer) is synced through a Firebase Realtime Database, so
+     it works between different people's own devices/IPs, not just this
+     browser. Each room gets its own path (/rooms/2009, /rooms/2011), so
+     unlike a single shared document there's no cross-room overwrite risk.
+
+     REQUIRED: the database's rules must allow public read/write on
+     /rooms (no auth token is sent by this code). In the Firebase console:
+     Realtime Database → Rules, and set at least:
+       { "rules": { "rooms": { ".read": true, ".write": true } } }
+     Without that, every request below silently fails (caught by the
+     try/catch) and the room panel will only ever show yourself.
   */
   (function(){
-    const ROOM_CAPACITY = {'2009':2, '2011':4};
-    const SESSION_KEY = 'purple-line-room-session';
-    const PROFILE_KEY = 'purple-line-room-profile';
-    const PHOTO_SIZE = 96;
-    const PEER_SCRIPT = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
-    const HOST_PREFIX = 'purple-line-room-';
+    const FIREBASE_DB_URL = 'https://my-room-app-ea5a5-default-rtdb.firebaseio.com';
+    const ROOM_CAPACITY = {'2009':2, '2011':4}; // room 2009 is a 2-person room, 2011 stays at 4
+    const HEARTBEAT_MS = 1000; // 1s — near real-time; Firebase's free tier easily handles this
+    const STALE_MS = 4000; // ~4 missed beats grace before someone is considered gone (avoids false "disconnected" on a single slow request)
+    const SESSION_KEY = 'purple-line-room-session'; // sessionStorage → gone once the app/tab is closed, so the code is asked again next time
+    const PROFILE_KEY = 'purple-line-room-profile'; // localStorage → set once, edited only via the settings (⚙) button
+    const PHOTO_SIZE = 96; // uploaded photos are downscaled to this square so they stay small enough to sync
 
     const roomModeBtn = document.getElementById('roomModeBtn');
     const roomModeBtnLabel = document.getElementById('roomModeBtnLabel');
@@ -4205,242 +4216,295 @@ if ("serviceWorker" in navigator) {
     const roomLeaveBtn = document.getElementById('roomLeaveBtn');
     if(!roomModeBtn) return;
 
+    const configured = FIREBASE_DB_URL && FIREBASE_DB_URL.indexOf('PASTE_') !== 0;
     let roomId = null;
     let memberId = null;
-    let peer = null;
-    let hostConnection = null;
     let heartbeatTimer = null;
-    let peerConnections = {};
-    let members = {};
-    let modalMode = 'join';
-    let pendingPhoto = null;
-    let isHost = false;
-    let joining = false;
+    let modalMode = 'join'; // 'join' | 'edit'
+    let pendingPhoto = null; // dataURL picked in this modal session, not yet saved
 
     function loadProfile(){
       try{ return JSON.parse(localStorage.getItem(PROFILE_KEY) || 'null') || {}; }catch(e){ return {}; }
     }
-    function saveProfile(p){ try{ localStorage.setItem(PROFILE_KEY, JSON.stringify(p)); }catch(e){} }
-    function hasProfile(){ const p=loadProfile(); return !!(p&&p.name); }
-
-    function setPreview(dataUrl){
-      if(dataUrl){ roomAvatarPreviewImg.src=dataUrl; roomAvatarPreviewImg.style.display='block'; roomAvatarPreviewPlaceholder.style.display='none'; }
-      else { roomAvatarPreviewImg.style.display='none'; roomAvatarPreviewPlaceholder.style.display='block'; }
+    function saveProfile(p){
+      try{ localStorage.setItem(PROFILE_KEY, JSON.stringify(p)); }catch(e){}
+    }
+    function hasProfile(){
+      const p = loadProfile();
+      return !!(p && p.name);
     }
 
-    roomAvatarPreviewBtn.addEventListener('click',()=>roomAvatarFileInput.click());
-    roomAvatarFileInput.addEventListener('change',()=>{
-      const file=roomAvatarFileInput.files&&roomAvatarFileInput.files[0]; if(!file)return;
-      const reader=new FileReader();
-      reader.onload=()=>{
-        const img=new Image();
-        img.onload=()=>{
-          const canvas=document.createElement('canvas'); canvas.width=PHOTO_SIZE; canvas.height=PHOTO_SIZE;
-          const ctx=canvas.getContext('2d'); const side=Math.min(img.width,img.height);
-          const sx=(img.width-side)/2, sy=(img.height-side)/2;
-          ctx.drawImage(img,sx,sy,side,side,0,0,PHOTO_SIZE,PHOTO_SIZE);
-          pendingPhoto=canvas.toDataURL('image/jpeg',0.72); setPreview(pendingPhoto);
+    function setPreview(dataUrl){
+      if(dataUrl){
+        roomAvatarPreviewImg.src = dataUrl;
+        roomAvatarPreviewImg.style.display = 'block';
+        roomAvatarPreviewPlaceholder.style.display = 'none';
+      } else {
+        roomAvatarPreviewImg.style.display = 'none';
+        roomAvatarPreviewPlaceholder.style.display = 'block';
+      }
+    }
+
+    roomAvatarPreviewBtn.addEventListener('click', ()=> roomAvatarFileInput.click());
+    roomAvatarFileInput.addEventListener('change', ()=>{
+      const file = roomAvatarFileInput.files && roomAvatarFileInput.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = ()=>{
+        const img = new Image();
+        img.onload = ()=>{
+          const canvas = document.createElement('canvas');
+          canvas.width = PHOTO_SIZE; canvas.height = PHOTO_SIZE;
+          const ctx = canvas.getContext('2d');
+          const side = Math.min(img.width, img.height);
+          const sx = (img.width - side) / 2, sy = (img.height - side) / 2;
+          ctx.drawImage(img, sx, sy, side, side, 0, 0, PHOTO_SIZE, PHOTO_SIZE);
+          pendingPhoto = canvas.toDataURL('image/jpeg', 0.72);
+          setPreview(pendingPhoto);
         };
-        img.src=reader.result;
+        img.src = reader.result;
       };
       reader.readAsDataURL(file);
     });
 
-    function avatarNode(m,size){
-      if(m&&m.photo){ const img=document.createElement('img'); img.className='room-member-avatar'; img.style.width=size+'px'; img.style.height=size+'px'; img.src=m.photo; img.alt=''; return img; }
-      const fallback=document.createElement('span'); fallback.className='room-member-avatar-fallback'; fallback.style.width=size+'px'; fallback.style.height=size+'px'; fallback.textContent=((m&&m.name)?m.name.trim().charAt(0):'?').toUpperCase(); return fallback;
+    function avatarNode(m, size){
+      if(m && m.photo){
+        const img = document.createElement('img');
+        img.className = 'room-member-avatar';
+        img.style.width = size+'px'; img.style.height = size+'px';
+        img.src = m.photo;
+        img.alt = '';
+        return img;
+      }
+      const fallback = document.createElement('span');
+      fallback.className = 'room-member-avatar-fallback';
+      fallback.style.width = size+'px'; fallback.style.height = size+'px';
+      fallback.textContent = ((m && m.name) ? m.name.trim().charAt(0) : '?').toUpperCase();
+      return fallback;
+    }
+
+    function roomUrl(){ return FIREBASE_DB_URL + '/rooms/' + roomId + '.json'; }
+
+    async function fetchRoom(){
+      if(!configured) return {members:{}};
+      try{
+        const res = await fetch(roomUrl());
+        if(!res.ok) return {members:{}};
+        const json = await res.json();
+        const data = (json && typeof json==='object') ? json : {members:{}};
+        if(!data.members) data.members = {};
+        const now = Date.now();
+        Object.keys(data.members).forEach(id=>{
+          if(now - (data.members[id].ts||0) > STALE_MS) delete data.members[id];
+        });
+        return data;
+      }catch(e){ return {members:{}}; }
+    }
+
+    async function pushRoom(data){
+      if(!configured) return;
+      try{
+        await fetch(roomUrl(), {
+          method: 'PUT',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(data)
+        });
+      }catch(e){}
     }
 
     function myStatus(){
-      const mode=document.body.classList.contains('prog-mode')?'Programming':'Normal';
-      const profile=loadProfile(); const base={photo:profile.photo||'',name:profile.name||'Studying'};
-      if(typeof phase==='undefined') return Object.assign(base,{state:'Idle',time:'--:--',mode});
-      if(phase==='work'){ const ms=elapsedWork+(phaseStartedAt?Date.now()-phaseStartedAt:0); return Object.assign(base,{state:'Studying',time:formatTime(ms),mode}); }
-      if(phase==='break'){ const ms=breakStartedAt?Date.now()-breakStartedAt:0; return Object.assign(base,{state:'Break',time:formatTime(ms),mode}); }
-      return Object.assign(base,{state:'Idle',time:'--:--',mode});
+      const mode = document.body.classList.contains('prog-mode') ? 'Programming' : 'Normal';
+      const profile = loadProfile();
+      const base = {photo: profile.photo || '', name: profile.name || 'Studying'};
+      if(typeof phase === 'undefined') return Object.assign(base, {state:'Idle', time:'--:--', mode:mode});
+      if(phase==='work'){
+        const ms = elapsedWork + (phaseStartedAt ? Date.now()-phaseStartedAt : 0);
+        return Object.assign(base, {state:'Studying', time: formatTime(ms), mode:mode});
+      }
+      if(phase==='break'){
+        const ms = breakStartedAt ? Date.now()-breakStartedAt : 0;
+        return Object.assign(base, {state:'Break', time: formatTime(ms), mode:mode});
+      }
+      return Object.assign(base, {state:'Idle', time:'--:--', mode:mode});
     }
 
-    function ensurePeerScript(){
-      return new Promise((resolve,reject)=>{
-        if(window.Peer) return resolve();
-        const existing=document.querySelector('script[data-purple-line-peerjs]');
-        if(existing){ existing.addEventListener('load',()=>resolve()); existing.addEventListener('error',()=>reject(new Error('Could not load room networking.'))); return; }
-        if(!navigator.onLine){ reject(new Error('An internet connection is required for Study Room.')); return; }
-        const script=document.createElement('script'); script.src=PEER_SCRIPT; script.async=true; script.dataset.purpleLinePeerjs='1';
-        script.onload=()=>window.Peer?resolve():reject(new Error('Room networking failed to load.'));
-        script.onerror=()=>reject(new Error('Could not load room networking. Check your internet connection.'));
-        document.head.appendChild(script);
-      });
-    }
-
-    function renderRoomPanel(){
-      const cap=ROOM_CAPACITY[roomId]||4;
-      const list=Object.keys(members);
-      const others=list.filter(id=>id!==memberId);
-      roomStatusDot.classList.toggle('online',others.length>0);
-      roomStatusTitle.textContent='Room '+roomId+' · '+(list.length)+'/'+cap;
-      roomMemberList.innerHTML='';
-      if(others.length===0){ const note=document.createElement('div'); note.className='room-empty-note'; note.textContent='No one else is here yet.'; roomMemberList.appendChild(note); return; }
-      others.forEach(id=>{
-        const m=members[id]||{}; const row=document.createElement('div'); row.className='room-member-row';
-        const name=document.createElement('span'); name.className='room-member-name'; name.textContent=m.name||'Studying';
-        const mode=document.createElement('span'); mode.className='room-member-mode'; mode.textContent=m.mode||'Normal';
-        const time=document.createElement('span'); time.className='room-member-time'; time.textContent=m.time||'';
-        row.appendChild(avatarNode(m,18)); row.appendChild(name); row.appendChild(mode); row.appendChild(time); roomMemberList.appendChild(row);
-      });
-    }
-
-    function snapshot(){ return {type:'snapshot',roomId,hostId:memberId,members}; }
-    function send(conn,data){ try{ if(conn&&conn.open) conn.send(data); }catch(e){} }
-    function broadcast(data,except){ Object.keys(peerConnections).forEach(id=>{ if(id!==except) send(peerConnections[id],data); }); }
-
-    function updateMine(){
-      if(!roomId||!memberId)return;
-      members[memberId]=myStatus();
-      renderRoomPanel();
-      if(isHost) broadcast({type:'snapshot',roomId,members});
-      else send(hostConnection,{type:'status',memberId,status:members[memberId]});
-    }
-
-    function startHeartbeat(){ stopHeartbeat(); updateMine(); heartbeatTimer=setInterval(updateMine,1000); }
-    function stopHeartbeat(){ if(heartbeatTimer){clearInterval(heartbeatTimer);heartbeatTimer=null;} }
-
-    function showRoomBar(){ roomStatusBar.classList.add('visible'); roomModeBtnLabel.textContent='Room '+roomId; roomModeBtn.classList.add('on'); }
-    function hideRoomBar(){ roomStatusBar.classList.remove('visible'); roomStatusBar.classList.remove('expanded'); roomModeBtnLabel.textContent='Join Room'; roomModeBtn.classList.remove('on'); }
-
-    function closeAllConnections(){
-      stopHeartbeat();
-      Object.keys(peerConnections).forEach(id=>{try{peerConnections[id].close();}catch(e){}});
-      peerConnections={};
-      if(hostConnection){try{hostConnection.close();}catch(e){} hostConnection=null;}
-      if(peer){try{peer.destroy();}catch(e){} peer=null;}
-    }
-
-    function leaveRoom(){
-      closeAllConnections(); roomId=null; memberId=null; members={}; isHost=false; joining=false;
-      try{sessionStorage.removeItem(SESSION_KEY);}catch(e){}
-      hideRoomBar();
-    }
-
-    function setupConnection(conn){
-      if(!conn)return;
-      conn.on('open',()=>{
-        if(isHost){
-          if(Object.keys(members).length >= (ROOM_CAPACITY[roomId]||4)){ send(conn,{type:'full'}); setTimeout(()=>{try{conn.close();}catch(e){}},100); return; }
-          peerConnections[conn.peer]=conn;
-          send(conn,{type:'welcome',roomId,hostId:memberId,members});
-        } else {
-          hostConnection=conn; send(conn,{type:'hello',memberId,profile:myStatus()});
-        }
-      });
-      conn.on('data',data=>{
-        if(!data||typeof data!=='object')return;
-        if(isHost){
-          if(data.type==='hello'){
-            if(!members[data.memberId] && Object.keys(members).length >= (ROOM_CAPACITY[roomId]||4)){ send(conn,{type:'full'}); try{conn.close();}catch(e){} return; }
-            peerConnections[conn.peer]=conn; members[data.memberId]=data.profile||{};
-            broadcast({type:'snapshot',roomId,members}); renderRoomPanel();
-          } else if(data.type==='status' && data.memberId){
-            members[data.memberId]=data.status||{}; broadcast({type:'snapshot',roomId,members},conn.peer); renderRoomPanel();
-          }
-        } else {
-          if(data.type==='welcome'||data.type==='snapshot'){ if(data.roomId!==roomId)return; members=data.members||{}; if(data.type==='welcome') members[memberId]=myStatus(); renderRoomPanel(); }
-          if(data.type==='full'){ roomModalErr.textContent='That room is full.'; closeAllConnections(); roomId=null; memberId=null; joining=false; return; }
-        }
-      });
-      conn.on('close',()=>{
-        if(isHost){ delete peerConnections[conn.peer]; const changed=[]; Object.keys(members).forEach(id=>{ if(id!==memberId && !Object.values(peerConnections).some(c=>c.peer===id)){ changed.push(id); } }); changed.forEach(id=>delete members[id]); renderRoomPanel(); broadcast({type:'snapshot',roomId,members}); }
-        else if(hostConnection===conn){ roomStatusDot.classList.remove('online'); roomStatusTitle.textContent='Room '+roomId+' · Disconnected'; }
-      });
-      conn.on('error',()=>{});
-    }
-
-    function createHost(code){
-      return new Promise((resolve,reject)=>{
-        const hostId=HOST_PREFIX+code;
-        peer=new Peer(hostId);
-        let settled=false;
-        const fail=e=>{ if(settled)return; settled=true; try{peer.destroy();}catch(x){} peer=null; reject(e); };
-        peer.on('open',id=>{
-          if(settled)return; settled=true; isHost=true; memberId=id; members={}; members[memberId]=myStatus();
-          peer.on('connection',setupConnection); resolve();
+    function renderRoomPanel(data){
+      const cap = ROOM_CAPACITY[roomId] || 4;
+      const others = Object.keys(data.members||{}).filter(id=>id!==memberId);
+      roomStatusDot.classList.toggle('online', others.length>0);
+      roomStatusTitle.textContent = 'Room ' + roomId + ' · ' + (others.length+1) + '/' + cap;
+      roomMemberList.innerHTML = '';
+      if(others.length===0){
+        const note = document.createElement('div');
+        note.className = 'room-empty-note';
+        note.textContent = 'No one else is here yet.';
+        roomMemberList.appendChild(note);
+      } else {
+        others.forEach(id=>{
+          const m = data.members[id];
+          const row = document.createElement('div');
+          row.className = 'room-member-row';
+          const name = document.createElement('span'); name.className='room-member-name'; name.textContent = m.name || 'Studying';
+          const mode = document.createElement('span'); mode.className='room-member-mode'; mode.textContent = m.mode||'Normal';
+          const time = document.createElement('span'); time.className='room-member-time'; time.textContent = m.time||'';
+          row.appendChild(avatarNode(m, 18)); row.appendChild(name); row.appendChild(mode); row.appendChild(time);
+          roomMemberList.appendChild(row);
         });
-        peer.on('error',err=>{
-          if(err&&err.type==='unavailable-id') fail(new Error('This room already has a host. Try joining again in a moment.'));
-          else fail(new Error('Could not connect to the online room service.'));
-        });
-      });
-    }
-
-    function createJoiner(code){
-      return new Promise((resolve,reject)=>{
-        peer=new Peer();
-        let settled=false;
-        const fail=e=>{ if(settled)return; settled=true; try{peer.destroy();}catch(x){} peer=null; reject(e); };
-        peer.on('open',id=>{
-          memberId=id; const conn=peer.connect(HOST_PREFIX+code,{reliable:true});
-          setupConnection(conn);
-          const timer=setTimeout(()=>fail(new Error('Room not found. Make sure someone has created this room first.')),9000);
-          conn.on('open',()=>{clearTimeout(timer); if(settled)return; settled=true; isHost=false; resolve();});
-          conn.on('error',()=>{clearTimeout(timer); fail(new Error('Could not join that room.'))});
-        });
-        peer.on('error',err=>{ if(!settled) fail(new Error('Could not connect to the online room service.')); });
-      });
-    }
-
-    async function joinRoom(code){
-      if(!ROOM_CAPACITY.hasOwnProperty(code)){ roomModalErr.textContent="That room code doesn't exist."; return; }
-      if(joining)return; joining=true; roomModalJoin.disabled=true; roomModalErr.textContent='Connecting…';
-      try{
-        if(!navigator.onLine) throw new Error('An internet connection is required for Study Room.');
-        await ensurePeerScript();
-        roomId=code;
-        // Try to become the room host first. If the room already exists, join it.
-        try{ await createHost(code); }
-        catch(hostErr){
-          if(hostErr&&hostErr.message&&hostErr.message.indexOf('already has a host')>=0) await createJoiner(code);
-          else throw hostErr;
-        }
-        try{sessionStorage.setItem(SESSION_KEY,JSON.stringify({roomId,memberId}));}catch(e){}
-        joining=false; roomModalJoin.disabled=false; roomModalOverlay.classList.remove('open'); roomCodeInput.value=''; showRoomBar(); renderRoomPanel(); startHeartbeat();
-      }catch(e){
-        closeAllConnections(); roomId=null; memberId=null; isHost=false; members={}; joining=false; roomModalJoin.disabled=false;
-        roomModalErr.textContent=e&&e.message?e.message:'Could not connect to the room.';
       }
     }
 
+    async function heartbeat(){
+      if(!roomId) return;
+      const data = await fetchRoom();
+      data.members[memberId] = Object.assign({ts:Date.now()}, myStatus());
+      renderRoomPanel(data);
+      pushRoom(data);
+    }
+
+    function startHeartbeat(){
+      stopHeartbeat();
+      heartbeat();
+      heartbeatTimer = setInterval(heartbeat, HEARTBEAT_MS);
+    }
+    function stopHeartbeat(){
+      if(heartbeatTimer){ clearInterval(heartbeatTimer); heartbeatTimer=null; }
+    }
+
+    function showRoomBar(){
+      roomStatusBar.classList.add('visible');
+      roomModeBtnLabel.textContent = 'Room ' + roomId;
+      roomModeBtn.classList.add('on');
+    }
+    function hideRoomBar(){
+      roomStatusBar.classList.remove('visible');
+      roomStatusBar.classList.remove('expanded');
+      roomModeBtnLabel.textContent = 'Join Room';
+      roomModeBtn.classList.remove('on');
+    }
+
+    async function leaveRoom(){
+      if(roomId && configured){
+        const data = await fetchRoom();
+        delete data.members[memberId];
+        pushRoom(data);
+      }
+      stopHeartbeat();
+      roomId = null; memberId = null;
+      try{ sessionStorage.removeItem(SESSION_KEY); }catch(e){}
+      hideRoomBar();
+    }
+
     function openModal(mode){
-      modalMode=mode; roomModalErr.textContent=''; roomCodeInput.value=''; pendingPhoto=null;
-      const profile=loadProfile(); roomNameInput.value=profile.name||''; setPreview(profile.photo||null);
-      if(mode==='edit'){ roomModalTitle.textContent='Edit profile'; roomModalDesc.textContent='Update your photo and name.'; roomProfileFields.style.display='block'; roomCodeField.style.display='none'; roomModalJoin.textContent='Save'; }
-      else if(hasProfile()){ roomModalTitle.textContent='Join a room'; roomModalDesc.textContent='Enter the room code. An internet connection is required while the room is open.'; roomProfileFields.style.display='none'; roomCodeField.style.display='block'; roomModalJoin.textContent='Join'; }
-      else { roomModalTitle.textContent='Set up your profile'; roomModalDesc.textContent="This is asked once — it's saved after."; roomProfileFields.style.display='block'; roomCodeField.style.display='block'; roomModalJoin.textContent='Join'; }
-      roomModalOverlay.classList.add('open'); (roomProfileFields.style.display==='none'?roomCodeInput:roomNameInput).focus();
+      modalMode = mode;
+      roomModalErr.textContent = '';
+      roomCodeInput.value = '';
+      pendingPhoto = null;
+      const profile = loadProfile();
+      roomNameInput.value = profile.name || '';
+      setPreview(profile.photo || null);
+
+      if(mode === 'edit'){
+        roomModalTitle.textContent = 'Edit profile';
+        roomModalDesc.textContent = 'Update your photo and name.';
+        roomProfileFields.style.display = 'block';
+        roomCodeField.style.display = 'none';
+        roomModalJoin.textContent = 'Save';
+      } else if(hasProfile()){
+        roomModalTitle.textContent = 'Join a room';
+        roomModalDesc.textContent = 'Enter the room code.';
+        roomProfileFields.style.display = 'none';
+        roomCodeField.style.display = 'block';
+        roomModalJoin.textContent = 'Join';
+      } else {
+        roomModalTitle.textContent = 'Set up your profile';
+        roomModalDesc.textContent = "This is asked once — it's saved after.";
+        roomProfileFields.style.display = 'block';
+        roomCodeField.style.display = 'block';
+        roomModalJoin.textContent = 'Join';
+      }
+      roomModalOverlay.classList.add('open');
+      (roomProfileFields.style.display==='none' ? roomCodeInput : roomNameInput).focus();
+    }
+
+    async function joinRoom(code){
+      if(!ROOM_CAPACITY.hasOwnProperty(code)){
+        roomModalErr.textContent = "That room code doesn't exist.";
+        return;
+      }
+      roomModalJoin.disabled = true;
+      roomId = code;
+      const cap = ROOM_CAPACITY[roomId];
+      const data = await fetchRoom();
+      const others = Object.keys(data.members||{});
+      if(others.length >= cap){
+        roomModalErr.textContent = 'That room is full (' + cap + '/' + cap + ').';
+        roomId = null;
+        roomModalJoin.disabled = false;
+        return;
+      }
+      memberId = 'm-' + Math.random().toString(36).slice(2,10);
+      try{ sessionStorage.setItem(SESSION_KEY, JSON.stringify({roomId:roomId, memberId:memberId})); }catch(e){}
+      roomModalJoin.disabled = false;
+      roomModalOverlay.classList.remove('open');
+      roomCodeInput.value = '';
+      showRoomBar();
+      startHeartbeat();
     }
 
     function handleModalSubmit(){
-      roomModalErr.textContent=''; const needsProfile=roomProfileFields.style.display!=='none';
-      if(needsProfile){ const name=roomNameInput.value.trim(); if(!name){roomModalErr.textContent='Enter a name first.';return;} const existing=loadProfile(); saveProfile({name,photo:pendingPhoto||existing.photo||''}); if(roomId) updateMine(); }
-      if(modalMode==='edit'){roomModalOverlay.classList.remove('open');return;}
+      roomModalErr.textContent = '';
+      const needsProfile = roomProfileFields.style.display !== 'none';
+      if(needsProfile){
+        const name = roomNameInput.value.trim();
+        if(!name){
+          roomModalErr.textContent = 'Enter a name first.';
+          return;
+        }
+        const existing = loadProfile();
+        saveProfile({ name: name, photo: pendingPhoto || existing.photo || '' });
+        if(roomId) heartbeat(); // push the updated profile immediately if already in a room
+      }
+      if(modalMode === 'edit'){
+        roomModalOverlay.classList.remove('open');
+        return;
+      }
       joinRoom(roomCodeInput.value.trim());
     }
 
-    roomModeBtn.addEventListener('click',()=>{ if(roomId){roomStatusBar.classList.toggle('expanded');return;} openModal('join'); });
-    roomSettingsBtn.addEventListener('click',e=>{e.stopPropagation();openModal('edit');});
-    roomStatusHead.addEventListener('click',()=>roomStatusBar.classList.toggle('expanded'));
-    roomModalCancel.addEventListener('click',()=>roomModalOverlay.classList.remove('open'));
-    roomModalOverlay.addEventListener('click',e=>{if(e.target===roomModalOverlay)roomModalOverlay.classList.remove('open');});
-    roomModalJoin.addEventListener('click',handleModalSubmit);
-    roomCodeInput.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();handleModalSubmit();}});
-    roomCodeInput.addEventListener('input',()=>{roomCodeInput.value=roomCodeInput.value.replace(/[^0-9]/g,'').slice(0,4);});
-    roomLeaveBtn.addEventListener('click',leaveRoom);
-    window.addEventListener('online',()=>{ if(roomId && hostConnection && !hostConnection.open){ roomStatusTitle.textContent='Room '+roomId+' · Reconnecting…'; } });
-    window.addEventListener('offline',()=>{ if(roomId){ roomStatusDot.classList.remove('online'); roomStatusTitle.textContent='Room '+roomId+' · Offline'; } });
+    roomModeBtn.addEventListener('click', ()=>{
+      closeMenu();
+      if(roomId){
+        roomStatusBar.classList.toggle('expanded');
+        return;
+      }
+      openModal('join');
+    });
+    roomSettingsBtn.addEventListener('click', e=>{
+      e.stopPropagation();
+      openModal('edit');
+    });
+    roomStatusHead.addEventListener('click', ()=> roomStatusBar.classList.toggle('expanded'));
+    roomModalCancel.addEventListener('click', ()=> roomModalOverlay.classList.remove('open'));
+    roomModalOverlay.addEventListener('click', e=>{ if(e.target===roomModalOverlay) roomModalOverlay.classList.remove('open'); });
+    roomModalJoin.addEventListener('click', handleModalSubmit);
+    roomCodeInput.addEventListener('keydown', e=>{
+      if(e.key==='Enter'){ e.preventDefault(); handleModalSubmit(); }
+    });
+    roomCodeInput.addEventListener('input', ()=>{
+      roomCodeInput.value = roomCodeInput.value.replace(/[^0-9]/g,'').slice(0,4);
+    });
+    roomLeaveBtn.addEventListener('click', leaveRoom);
 
+    /* Rejoin silently if this same tab/session already had a room open
+       (e.g. after a normal reload). Closing the app clears sessionStorage,
+       so the code prompt comes back next time the app is actually closed. */
     try{
-      const saved=JSON.parse(sessionStorage.getItem(SESSION_KEY)||'null');
-      // Do not silently reconnect: networking is intentionally activated only when the user opens Study Room.
-      if(saved) sessionStorage.removeItem(SESSION_KEY);
+      const saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null');
+      if(saved && saved.roomId && saved.memberId && ROOM_CAPACITY.hasOwnProperty(saved.roomId)){
+        roomId = saved.roomId; memberId = saved.memberId;
+        showRoomBar();
+        startHeartbeat();
+      }
     }catch(e){}
   })();
 
